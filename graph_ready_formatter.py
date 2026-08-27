@@ -19,22 +19,158 @@ ENTITY_PREFIXES = {
 
 
 # =========================================================
-# NORMALIZATION
+# BASIC NORMALIZATION
 # =========================================================
 
 def normalize_text(value):
-
     if value is None:
         return ""
 
     return str(value).strip()
 
 
-def normalize_key(value):
+def normalize_person_key(value):
+    value = normalize_text(value).lower()
+    value = re.sub(r"[^a-z0-9\s]", "", value)
+    value = re.sub(r"\s+", " ", value)
+    return value.strip()
 
-    return normalize_text(
+
+def normalize_phone(value):
+    if not value:
+        return ""
+
+    digits = re.sub(
+        r"\D",
+        "",
+        str(value)
+    )
+
+    if len(digits) == 12 and digits.startswith("91"):
+        digits = digits[2:]
+
+    return digits
+
+
+def normalize_vehicle(value):
+    if not value:
+        return ""
+
+    return re.sub(
+        r"[^A-Za-z0-9]",
+        "",
+        str(value)
+    ).upper()
+
+
+def normalize_account(value):
+    if not value:
+        return ""
+
+    return re.sub(
+        r"[^A-Za-z0-9]",
+        "",
+        str(value)
+    ).upper()
+
+
+def normalize_location(value):
+    value = normalize_text(value)
+
+    if not value:
+        return ""
+
+    value = re.sub(
+        r"\s+",
+        " ",
         value
-    ).lower()
+    )
+
+    return value.strip()
+
+
+def normalize_organization(value):
+    value = normalize_text(value)
+    value = re.sub(r"\s+", " ", value)
+    return value.strip()
+
+
+def canonical_value(
+    value,
+    entity_type
+):
+    entity_type = normalize_text(
+        entity_type
+    ).upper()
+
+    if entity_type == "PERSON":
+        return normalize_text(value)
+
+    if entity_type == "PHONE":
+        return normalize_phone(value)
+
+    if entity_type == "VEHICLE":
+        return normalize_vehicle(value)
+
+    if entity_type == "ACCOUNT":
+        return normalize_account(value)
+
+    if entity_type == "LOCATION":
+        return normalize_location(value)
+
+    if entity_type == "ORGANIZATION":
+        return normalize_organization(value)
+
+    return normalize_text(value)
+
+
+def canonical_lookup_key(
+    value,
+    entity_type
+):
+    entity_type = normalize_text(
+        entity_type
+    ).upper()
+
+    if entity_type == "PERSON":
+        normalized = normalize_person_key(
+            value
+        )
+
+    elif entity_type == "PHONE":
+        normalized = normalize_phone(
+            value
+        )
+
+    elif entity_type == "VEHICLE":
+        normalized = normalize_vehicle(
+            value
+        )
+
+    elif entity_type == "ACCOUNT":
+        normalized = normalize_account(
+            value
+        )
+
+    elif entity_type == "LOCATION":
+        normalized = normalize_location(
+            value
+        ).lower()
+
+    elif entity_type == "ORGANIZATION":
+        normalized = normalize_organization(
+            value
+        ).lower()
+
+    else:
+        normalized = normalize_text(
+            value
+        ).lower()
+
+    return (
+        entity_type,
+        normalized
+    )
 
 
 # =========================================================
@@ -42,7 +178,6 @@ def normalize_key(value):
 # =========================================================
 
 def get_source_type(source_name):
-
     if not source_name:
         return "UNKNOWN"
 
@@ -73,7 +208,6 @@ def get_source_type(source_name):
 # =========================================================
 
 def normalize_timestamp(value):
-
     if not value:
         return None
 
@@ -94,9 +228,7 @@ def normalize_timestamp(value):
     ]
 
     for fmt in formats:
-
         try:
-
             dt = datetime.strptime(
                 value,
                 fmt
@@ -123,7 +255,6 @@ def find_location(
     evidence,
     locations
 ):
-
     if not evidence:
         return None
 
@@ -134,16 +265,21 @@ def find_location(
     matches = []
 
     for location in locations:
+        if not location:
+            continue
+
+        location_text = normalize_text(
+            location
+        )
 
         if (
-            location
+            location_text
             and
-            location.lower()
+            location_text.lower()
             in evidence_lower
         ):
-
             matches.append(
-                location
+                location_text
             )
 
     if not matches:
@@ -162,21 +298,49 @@ def find_location(
 # =========================================================
 
 def guess_entity_type(value):
-
     value = normalize_text(
         value
     )
 
-    # PHONE
-    if re.fullmatch(
-        r'[6-9]\d{9}',
+    if not value:
+        return "UNKNOWN"
+
+    # PHONE:
+    # 9876543210
+    # 98765-43210
+    # 98765 43210
+    # +91 9876543210
+    phone_digits = normalize_phone(
         value
+    )
+
+    if (
+        len(phone_digits) == 10
+        and
+        phone_digits[0] in "6789"
+        and
+        re.fullmatch(
+            r"(?:\+?91[\s\-]?)?[6-9](?:[\s\-]?\d){9}",
+            value
+        )
     ):
         return "PHONE"
 
-    # VEHICLE
+    # VEHICLE:
+    # TN11CD7788
+    # TN 11 CD 7788
+    # TN-11-CD-7788
     if re.fullmatch(
-        r'[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{4}',
+        r"[A-Z]{2}[\s\-]?\d{1,2}[\s\-]?[A-Z]{1,3}[\s\-]?\d{4}",
+        value,
+        re.IGNORECASE
+    ):
+        return "VEHICLE"
+
+    # Vehicle prefix accidentally included by extractor:
+    # "vehicle TN 11 CD 7788"
+    if re.fullmatch(
+        r"(?:vehicle\s+)?[A-Z]{2}[\s\-]?\d{1,2}[\s\-]?[A-Z]{1,3}[\s\-]?\d{4}",
         value,
         re.IGNORECASE
     ):
@@ -184,7 +348,7 @@ def guess_entity_type(value):
 
     # ACCOUNT
     if re.fullmatch(
-        r'(?:ACC|HDFC|ICICI|SBI|AXIS)[A-Z0-9]+',
+        r"(?:ACC|HDFC|ICICI|SBI|AXIS)[\s\-]?[A-Z0-9]+",
         value,
         re.IGNORECASE
     ):
@@ -194,70 +358,170 @@ def guess_entity_type(value):
 
 
 # =========================================================
+# RELATION-ENDPOINT TYPE HINTS
+# =========================================================
+
+def infer_source_type_from_relation(
+    relation_type,
+    source_name
+):
+    relation_type = normalize_text(
+        relation_type
+    ).upper()
+
+    if relation_type == "TRANSFERRED_TO":
+        return "ACCOUNT"
+
+    guessed = guess_entity_type(
+        source_name
+    )
+
+    if guessed != "UNKNOWN":
+        return guessed
+
+    return None
+
+
+def infer_target_type_from_relation(
+    relation_type,
+    target_name
+):
+    relation_type = normalize_text(
+        relation_type
+    ).upper()
+
+    if relation_type in {
+        "USED_VEHICLE",
+        "USES_VEHICLE"
+    }:
+        return "VEHICLE"
+
+    if relation_type in {
+        "USES_PHONE",
+        "USED_PHONE",
+        "HAS_PHONE"
+    }:
+        return "PHONE"
+
+    if relation_type in {
+        "USES_ACCOUNT",
+        "USED_ACCOUNT",
+        "HAS_ACCOUNT",
+        "TRANSFERRED_TO"
+    }:
+        return "ACCOUNT"
+
+    if relation_type in {
+        "LOCATED_AT",
+        "VISITED",
+        "LIVES_AT",
+        "RESIDES_AT",
+        "STAYED_AT"
+    }:
+        return "LOCATION"
+
+    if relation_type in {
+        "WORKS_FOR",
+        "MEMBER_OF"
+    }:
+        return "ORGANIZATION"
+
+    guessed = guess_entity_type(
+        target_name
+    )
+
+    if guessed != "UNKNOWN":
+        return guessed
+
+    return None
+
+
+# =========================================================
+# RELATION ENDPOINT CLEANUP
+# =========================================================
+
+def clean_endpoint_for_type(
+    value,
+    entity_type
+):
+    value = normalize_text(
+        value
+    )
+
+    entity_type = normalize_text(
+        entity_type
+    ).upper()
+
+    if entity_type == "VEHICLE":
+        match = re.search(
+            r"[A-Z]{2}[\s\-]?\d{1,2}[\s\-]?[A-Z]{1,3}[\s\-]?\d{4}",
+            value,
+            re.IGNORECASE
+        )
+
+        if match:
+            return normalize_vehicle(
+                match.group(0)
+            )
+
+    if entity_type == "PHONE":
+        match = re.search(
+            r"(?:\+?91[\s\-]?)?[6-9](?:[\s\-]?\d){9}",
+            value
+        )
+
+        if match:
+            return normalize_phone(
+                match.group(0)
+            )
+
+    if entity_type == "ACCOUNT":
+        match = re.search(
+            r"(?:ACC|HDFC|ICICI|SBI|AXIS)[\s\-]?[A-Z0-9]+",
+            value,
+            re.IGNORECASE
+        )
+
+        if match:
+            return normalize_account(
+                match.group(0)
+            )
+
+    return canonical_value(
+        value,
+        entity_type
+    )
+
+
+# =========================================================
 # EVENT TYPE
 # =========================================================
 
 def get_event_type(relationship):
-
     relation = normalize_text(
         relationship
     ).upper()
 
     mapping = {
-
-        "MET":
-            "MEETING",
-
-        "CALLED":
-            "COMMUNICATION",
-
-        "CONTACTED":
-            "COMMUNICATION",
-
-        "MESSAGED":
-            "COMMUNICATION",
-
-        "TRANSFERRED_TO":
-            "TRANSACTION",
-
-        "USED_VEHICLE":
-            "VEHICLE_USE",
-
-        "USES_PHONE":
-            "PHONE_USAGE",
-
-        "TRAVELLED_WITH":
-            "TRAVEL",
-
-        "VISITED":
-            "VISIT",
-
-        "DELIVERED_TO":
-            "DELIVERY",
-
-        "INTRODUCED_TO":
-            "INTRODUCTION",
-
-        "SOLD_TO":
-            "SALE",
-
-        "BORROWED_FROM":
-            "BORROWING",
-
-        "RENTED_FROM":
-            "RENTAL",
-
-        "RETURNED_TO":
-            "RETURN",
-
-        "LENT_TO":
-            "LENDING",
-
-        "SHARED_WITH":
-            "ASSOCIATION",
-
-        "WORKS_FOR":
-            "EMPLOYMENT"
+        "MET": "MEETING",
+        "CALLED": "COMMUNICATION",
+        "CONTACTED": "COMMUNICATION",
+        "MESSAGED": "COMMUNICATION",
+        "TRANSFERRED_TO": "TRANSACTION",
+        "USED_VEHICLE": "VEHICLE_USE",
+        "USES_PHONE": "PHONE_USAGE",
+        "TRAVELLED_WITH": "TRAVEL",
+        "VISITED": "VISIT",
+        "DELIVERED_TO": "DELIVERY",
+        "INTRODUCED_TO": "INTRODUCTION",
+        "SOLD_TO": "SALE",
+        "BORROWED_FROM": "BORROWING",
+        "RENTED_FROM": "RENTAL",
+        "RETURNED_TO": "RETURN",
+        "LENT_TO": "LENDING",
+        "LENT_ITEM_TO": "LENDING",
+        "SHARED_WITH": "ASSOCIATION",
+        "WORKS_FOR": "EMPLOYMENT"
     }
 
     return mapping.get(
@@ -275,17 +539,17 @@ def build_graph_ready_json(
     relationships,
     aliases_by_person=None
 ):
-
     if aliases_by_person is None:
         aliases_by_person = {}
 
+    if relationships is None:
+        relationships = []
 
     # =====================================================
     # COMBINE STRUCTURED DATA
     # =====================================================
 
     combined = {
-
         "persons": [],
         "phones": [],
         "vehicles": [],
@@ -295,22 +559,24 @@ def build_graph_ready_json(
         "aliases": []
     }
 
-
     # MULTI FILE
     if isinstance(
         structured_data,
         list
     ):
-
         for item in structured_data:
-
             data = item.get(
                 "data",
                 item
             )
 
-            for key in combined:
+            if not isinstance(
+                data,
+                dict
+            ):
+                continue
 
+            for key in combined:
                 values = data.get(
                     key,
                     []
@@ -320,22 +586,18 @@ def build_graph_ready_json(
                     values,
                     list
                 ):
-
                     combined[
                         key
                     ].extend(
                         values
                     )
 
-
     # SINGLE FILE
     elif isinstance(
         structured_data,
         dict
     ):
-
         for key in combined:
-
             values = (
                 structured_data.get(
                     key,
@@ -347,26 +609,22 @@ def build_graph_ready_json(
                 values,
                 list
             ):
-
                 combined[
                     key
                 ].extend(
                     values
                 )
 
-
-    # =====================================================
-    # REMOVE DUPLICATES
-    # =====================================================
-
+    # Raw dedup first.
     for key in combined:
-
         combined[key] = list(
             dict.fromkeys(
-                combined[key]
+                value
+                for value
+                in combined[key]
+                if value is not None
             )
         )
-
 
     # =====================================================
     # ENTITY STORAGE
@@ -374,6 +632,13 @@ def build_graph_ready_json(
 
     entities = []
 
+    # Key is:
+    # (ENTITY_TYPE, normalized_value)
+    #
+    # This prevents:
+    # PERSON "1234"
+    # and ACCOUNT "1234"
+    # from accidentally sharing an ID.
     entity_lookup = {}
 
     counters = {
@@ -386,7 +651,6 @@ def build_graph_ready_json(
         "UNKNOWN": 0
     }
 
-
     # =====================================================
     # ADD ENTITY
     # =====================================================
@@ -396,94 +660,172 @@ def build_graph_ready_json(
         value,
         aliases=None
     ):
+        entity_type = normalize_text(
+            entity_type
+        ).upper()
 
-        value = normalize_text(
-            value
+        if entity_type not in ENTITY_PREFIXES:
+            entity_type = "UNKNOWN"
+
+        value = clean_endpoint_for_type(
+            value,
+            entity_type
         )
 
         if not value:
             return None
 
-        lookup_key = normalize_key(
-            value
+        lookup_key = canonical_lookup_key(
+            value,
+            entity_type
         )
 
-        if lookup_key in entity_lookup:
+        if not lookup_key[1]:
+            return None
 
-            return entity_lookup[
+        # ---------------------------------------------
+        # EXISTING ENTITY
+        # ---------------------------------------------
+
+        if lookup_key in entity_lookup:
+            existing_id = entity_lookup[
                 lookup_key
             ]
 
+            # Preserve different textual forms as aliases
+            # for PERSON only.
+            if entity_type == "PERSON":
+                for entity in entities:
+                    if (
+                        entity.get("id") == existing_id
+                        and
+                        entity.get("type") == "PERSON"
+                    ):
+                        existing_name = entity.get(
+                            "name",
+                            ""
+                        )
+
+                        candidate_values = []
+
+                        original_value = normalize_text(
+                            value
+                        )
+
+                        if (
+                            original_value
+                            and
+                            normalize_person_key(
+                                original_value
+                            )
+                            ==
+                            normalize_person_key(
+                                existing_name
+                            )
+                            and
+                            original_value
+                            !=
+                            existing_name
+                        ):
+                            candidate_values.append(
+                                original_value
+                            )
+
+                        for alias in aliases or []:
+                            alias = normalize_text(
+                                alias
+                            )
+
+                            if alias:
+                                candidate_values.append(
+                                    alias
+                                )
+
+                        for candidate in candidate_values:
+                            if (
+                                candidate != existing_name
+                                and
+                                candidate not in entity[
+                                    "aliases"
+                                ]
+                            ):
+                                entity[
+                                    "aliases"
+                                ].append(
+                                    candidate
+                                )
+
+                        break
+
+            return existing_id
+
+        # ---------------------------------------------
+        # CREATE NEW ENTITY
+        # ---------------------------------------------
 
         counters[
             entity_type
         ] += 1
 
-
         prefix = ENTITY_PREFIXES[
             entity_type
         ]
-
 
         entity_id = (
             f"{prefix}"
             f"{counters[entity_type]:03d}"
         )
 
-
         if entity_type == "PERSON":
+            cleaned_aliases = []
+
+            for alias in aliases or []:
+                alias = normalize_text(
+                    alias
+                )
+
+                if (
+                    alias
+                    and
+                    alias != value
+                    and
+                    alias not in cleaned_aliases
+                ):
+                    cleaned_aliases.append(
+                        alias
+                    )
 
             entity_object = {
-
-                "id":
-                    entity_id,
-
-                "type":
-                    "PERSON",
-
-                "name":
-                    value,
-
-                "aliases":
-                    aliases or []
+                "id": entity_id,
+                "type": "PERSON",
+                "name": value,
+                "aliases": cleaned_aliases
             }
 
         else:
-
             entity_object = {
-
-                "id":
-                    entity_id,
-
-                "type":
-                    entity_type,
-
-                "value":
-                    value
+                "id": entity_id,
+                "type": entity_type,
+                "value": value
             }
-
 
         entities.append(
             entity_object
         )
 
-
         entity_lookup[
             lookup_key
         ] = entity_id
 
-
         return entity_id
 
-
     # =====================================================
-    # PERSONS
+    # STRUCTURED PERSONS
     # =====================================================
 
     for person in combined[
         "persons"
     ]:
-
         aliases = aliases_by_person.get(
             person,
             []
@@ -495,6 +837,24 @@ def build_graph_ready_json(
             aliases
         )
 
+    # =====================================================
+    # STRUCTURED ALIASES
+    # =====================================================
+
+    # We intentionally DO NOT blindly merge an alias
+    # into a person because alias ownership is not known.
+    #
+    # However, if an alias is only a formatting/casing
+    # variation of an existing person, add_entity() will
+    # safely deduplicate it.
+
+    for alias in combined[
+        "aliases"
+    ]:
+        add_entity(
+            "PERSON",
+            alias
+        )
 
     # =====================================================
     # PHONES
@@ -503,12 +863,10 @@ def build_graph_ready_json(
     for phone in combined[
         "phones"
     ]:
-
         add_entity(
             "PHONE",
             phone
         )
-
 
     # =====================================================
     # VEHICLES
@@ -517,12 +875,10 @@ def build_graph_ready_json(
     for vehicle in combined[
         "vehicles"
     ]:
-
         add_entity(
             "VEHICLE",
             vehicle
         )
-
 
     # =====================================================
     # ACCOUNTS
@@ -531,12 +887,10 @@ def build_graph_ready_json(
     for account in combined[
         "accounts"
     ]:
-
         add_entity(
             "ACCOUNT",
             account
         )
-
 
     # =====================================================
     # LOCATIONS
@@ -545,12 +899,10 @@ def build_graph_ready_json(
     for location in combined[
         "locations"
     ]:
-
         add_entity(
             "LOCATION",
             location
         )
-
 
     # =====================================================
     # ORGANIZATIONS
@@ -559,12 +911,10 @@ def build_graph_ready_json(
     for organization in combined[
         "organizations"
     ]:
-
         add_entity(
             "ORGANIZATION",
             organization
         )
-
 
     # =====================================================
     # RELATIONSHIPS
@@ -580,9 +930,7 @@ def build_graph_ready_json(
 
     event_counter = 0
 
-
     for relation in relationships:
-
         source_name = normalize_text(
             relation.get(
                 "source_entity"
@@ -601,7 +949,6 @@ def build_graph_ready_json(
             )
         ).upper()
 
-
         if not source_name:
             continue
 
@@ -611,45 +958,174 @@ def build_graph_ready_json(
         if not relation_type:
             continue
 
-
         # =================================================
-        # SOURCE ID
+        # DETERMINE ENDPOINT TYPES
         # =================================================
 
-        source_id = entity_lookup.get(
-            normalize_key(
+        source_type_hint = (
+            infer_source_type_from_relation(
+                relation_type,
                 source_name
             )
         )
 
+        target_type_hint = (
+            infer_target_type_from_relation(
+                relation_type,
+                target_name
+            )
+        )
 
+        # -------------------------------------------------
+        # Existing entity matching should first try
+        # semantic relation hints.
+        # -------------------------------------------------
+
+        source_id = None
+
+        if source_type_hint:
+            source_name = (
+                clean_endpoint_for_type(
+                    source_name,
+                    source_type_hint
+                )
+            )
+
+            source_id = (
+                entity_lookup.get(
+                    canonical_lookup_key(
+                        source_name,
+                        source_type_hint
+                    )
+                )
+            )
+
+        # Person fallback.
         if not source_id:
-
-            source_type = guess_entity_type(
-                source_name
+            person_key = (
+                canonical_lookup_key(
+                    source_name,
+                    "PERSON"
+                )
             )
 
-            source_id = add_entity(
-                source_type,
-                source_name
+            source_id = (
+                entity_lookup.get(
+                    person_key
+                )
             )
 
+        # Generic guessed fallback.
+        if not source_id:
+            source_type = (
+                source_type_hint
+                or
+                guess_entity_type(
+                    source_name
+                )
+            )
+
+            if (
+                source_type == "UNKNOWN"
+                and
+                normalize_person_key(
+                    source_name
+                )
+            ):
+                # If text endpoint matches an extracted
+                # person by normalized form, use PERSON.
+                person_candidate = (
+                    entity_lookup.get(
+                        canonical_lookup_key(
+                            source_name,
+                            "PERSON"
+                        )
+                    )
+                )
+
+                if person_candidate:
+                    source_id = (
+                        person_candidate
+                    )
+
+            if not source_id:
+                source_id = add_entity(
+                    source_type,
+                    source_name
+                )
 
         # =================================================
         # TARGET ID
         # =================================================
 
-        target_id = entity_lookup.get(
-            normalize_key(
-                target_name
-            )
-        )
+        target_id = None
 
+        if target_type_hint:
+            target_name = (
+                clean_endpoint_for_type(
+                    target_name,
+                    target_type_hint
+                )
+            )
+
+            target_id = (
+                entity_lookup.get(
+                    canonical_lookup_key(
+                        target_name,
+                        target_type_hint
+                    )
+                )
+            )
+
+        # Person-to-person relations.
+        person_target_relations = {
+            "MET",
+            "CALLED",
+            "CONTACTED",
+            "MESSAGED",
+            "RENTED_FROM",
+            "BORROWED_FROM",
+            "RECEIVED_FROM",
+            "DELIVERED_TO",
+            "SOLD_TO",
+            "RETURNED_TO",
+            "LENT_TO",
+            "LENT_ITEM_TO",
+            "SHARED_WITH",
+            "TRAVELLED_WITH",
+            "STAYED_WITH",
+            "INTRODUCED_TO",
+            "ASSOCIATED_WITH"
+        }
+
+        if (
+            not target_id
+            and
+            relation_type
+            in person_target_relations
+        ):
+            target_id = (
+                entity_lookup.get(
+                    canonical_lookup_key(
+                        target_name,
+                        "PERSON"
+                    )
+                )
+            )
+
+            if not target_id:
+                target_id = add_entity(
+                    "PERSON",
+                    target_name
+                )
 
         if not target_id:
-
-            target_type = guess_entity_type(
-                target_name
+            target_type = (
+                target_type_hint
+                or
+                guess_entity_type(
+                    target_name
+                )
             )
 
             target_id = add_entity(
@@ -657,6 +1133,8 @@ def build_graph_ready_json(
                 target_name
             )
 
+        if not source_id or not target_id:
+            continue
 
         # =================================================
         # EVIDENCE
@@ -668,13 +1146,11 @@ def build_graph_ready_json(
             )
         )
 
-
         source_file = normalize_text(
             relation.get(
                 "source_file"
             )
         )
-
 
         # =================================================
         # RELATIONSHIP CONFIDENCE
@@ -689,9 +1165,7 @@ def build_graph_ready_json(
             )
         )
 
-
         try:
-
             confidence = float(
                 confidence
             )
@@ -700,26 +1174,19 @@ def build_graph_ready_json(
             ValueError,
             TypeError
         ):
-
             confidence = 0.5
-
 
         evidence_id = None
 
-
         if evidence_text:
-
             evidence_counter += 1
 
             evidence_id = (
                 f"EV{evidence_counter:03d}"
             )
 
-
             evidence_object = {
-
-                "id":
-                    evidence_id,
+                "id": evidence_id,
 
                 "source_type":
                     get_source_type(
@@ -751,18 +1218,15 @@ def build_graph_ready_json(
                     )
             }
 
-
             evidence_list.append(
                 evidence_object
             )
-
 
         # =================================================
         # FINAL RELATIONSHIP
         # =================================================
 
         relationship_object = {
-
             "source_id":
                 source_id,
 
@@ -781,21 +1245,21 @@ def build_graph_ready_json(
             "decision":
                 relation.get(
                     "validation_decision",
-                    "REVIEW"
+                    relation.get(
+                        "decision",
+                        "REVIEW"
+                    )
                 )
         }
-
 
         if relation.get(
             "amount"
         ):
-
             relationship_object[
                 "amount"
             ] = relation.get(
                 "amount"
             )
-
 
         timestamp = normalize_timestamp(
             relation.get(
@@ -803,25 +1267,19 @@ def build_graph_ready_json(
             )
         )
 
-
         if timestamp:
-
             relationship_object[
                 "timestamp"
             ] = timestamp
 
-
         if evidence_id:
-
             relationship_object[
                 "evidence_id"
             ] = evidence_id
 
-
         final_relationships.append(
             relationship_object
         )
-
 
         # =================================================
         # EVENT
@@ -834,22 +1292,18 @@ def build_graph_ready_json(
             ]
         )
 
-
         if (
             timestamp
             or
             location
         ):
-
             event_counter += 1
 
             event_id = (
                 f"E{event_counter:03d}"
             )
 
-
             participants = []
-
 
             if (
                 source_id.startswith(
@@ -860,11 +1314,9 @@ def build_graph_ready_json(
                     "PH"
                 )
             ):
-
                 participants.append(
                     source_id
                 )
-
 
             if (
                 target_id.startswith(
@@ -874,20 +1326,15 @@ def build_graph_ready_json(
                 not target_id.startswith(
                     "PH"
                 )
+                and
+                target_id
+                not in participants
             ):
-
-                if (
+                participants.append(
                     target_id
-                    not in participants
-                ):
-
-                    participants.append(
-                        target_id
-                    )
-
+                )
 
             event_object = {
-
                 "id":
                     event_id,
 
@@ -906,18 +1353,14 @@ def build_graph_ready_json(
                     participants
             }
 
-
             if evidence_id:
-
                 event_object[
                     "evidence_id"
                 ] = evidence_id
 
-
             events.append(
                 event_object
             )
-
 
     # =====================================================
     # REMOVE DUPLICATE RELATIONSHIPS
@@ -927,11 +1370,11 @@ def build_graph_ready_json(
 
     unique_relationships = []
 
-
     for relation in final_relationships:
-
+        # Keep timestamp in the key when available so two
+        # repeated interactions at different times are not
+        # accidentally collapsed into one.
         key = (
-
             relation[
                 "source_id"
             ],
@@ -942,30 +1385,33 @@ def build_graph_ready_json(
 
             relation[
                 "type"
-            ]
-        )
+            ],
 
+            relation.get(
+                "timestamp"
+            ),
+
+            relation.get(
+                "amount"
+            )
+        )
 
         if key in seen:
             continue
-
 
         seen.add(
             key
         )
 
-
         unique_relationships.append(
             relation
         )
-
 
     # =====================================================
     # FINAL GRAPH READY JSON
     # =====================================================
 
     return {
-
         "entities":
             entities,
 

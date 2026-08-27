@@ -9,7 +9,8 @@ from extractor import (
 )
 
 from entity_resolution import (
-    resolve_person_entities
+    build_person_records,
+    resolve_person_records
 )
 
 from relationship_extractor import (
@@ -35,6 +36,15 @@ from graph_ready_formatter import (
 from review_manager import (
     approve_relation,
     reject_relation
+)
+
+from value_normalizer import (
+    normalize_person_key,
+    normalize_phone,
+    normalize_vehicle,
+    normalize_account,
+    get_target_type_hint,
+    clean_entity_endpoint
 )
 
 
@@ -100,7 +110,10 @@ def empty_structure():
 # MERGE STRUCTURED DATA
 # =========================================================
 
-def merge_structured_data(base, new_data):
+def merge_structured_data(
+    base,
+    new_data
+):
     if not base:
         base = empty_structure()
 
@@ -108,18 +121,32 @@ def merge_structured_data(base, new_data):
         return base
 
     for key in base:
-        current_values = base.get(key, [])
-        new_values = new_data.get(key, [])
+        current_values = base.get(
+            key,
+            []
+        )
 
-        if not isinstance(current_values, list):
+        new_values = new_data.get(
+            key,
+            []
+        )
+
+        if not isinstance(
+            current_values,
+            list
+        ):
             current_values = []
 
-        if not isinstance(new_values, list):
+        if not isinstance(
+            new_values,
+            list
+        ):
             new_values = []
 
         base[key] = list(
             dict.fromkeys(
-                current_values + new_values
+                current_values
+                + new_values
             )
         )
 
@@ -130,8 +157,13 @@ def merge_structured_data(base, new_data):
 # ENTITY EXTRACTION
 # =========================================================
 
-def run_entity_extraction(text, source_file=None):
-    entities = extract_entities(text)
+def run_entity_extraction(
+    text,
+    source_file=None
+):
+    entities = extract_entities(
+        text
+    )
 
     if not entities:
         return (
@@ -140,26 +172,37 @@ def run_entity_extraction(text, source_file=None):
             []
         )
 
-    structured_data = structure_entities(
-        entities
+    structured_data = (
+        structure_entities(
+            entities
+        )
     )
 
     rows = []
 
     for entity in entities:
         row = {
-            "Entity": entity["text"],
-            "Type": entity["label"],
-            "Entity Confidence": round(
-                entity["score"],
-                2
-            )
+            "Entity":
+                entity["text"],
+
+            "Type":
+                entity["label"],
+
+            "Entity Confidence":
+                round(
+                    entity["score"],
+                    2
+                )
         }
 
         if source_file:
-            row["File"] = source_file
+            row[
+                "File"
+            ] = source_file
 
-        rows.append(row)
+        rows.append(
+            row
+        )
 
     return (
         entities,
@@ -177,22 +220,29 @@ def run_dynamic_relationship_pipeline(
     source_file,
     structured_data
 ):
-    relationships = extract_dynamic_relationships(
-        text,
-        source_file=source_file
-    )
-
-    relationships = postprocess_relationships(
-        relationships,
-        text,
-        structured_data.get(
-            "persons",
-            []
+    relationships = (
+        extract_dynamic_relationships(
+            text,
+            source_file=
+                source_file
         )
     )
 
-    relationships = validate_relationships(
-        relationships
+    relationships = (
+        postprocess_relationships(
+            relationships,
+            text,
+            structured_data.get(
+                "persons",
+                []
+            )
+        )
+    )
+
+    relationships = (
+        validate_relationships(
+            relationships
+        )
     )
 
     return relationships
@@ -208,22 +258,29 @@ def run_structured_relationship_pipeline(
     source_file,
     structured_data
 ):
-    relationships = extract_relationships_from_dataframe(
-        dataframe,
-        source_file=source_file
-    )
-
-    relationships = postprocess_relationships(
-        relationships,
-        text,
-        structured_data.get(
-            "persons",
-            []
+    relationships = (
+        extract_relationships_from_dataframe(
+            dataframe,
+            source_file=
+                source_file
         )
     )
 
-    relationships = validate_relationships(
-        relationships
+    relationships = (
+        postprocess_relationships(
+            relationships,
+            text,
+            structured_data.get(
+                "persons",
+                []
+            )
+        )
+    )
+
+    relationships = (
+        validate_relationships(
+            relationships
+        )
     )
 
     return relationships
@@ -233,7 +290,9 @@ def run_structured_relationship_pipeline(
 # VALIDATION SUMMARY
 # =========================================================
 
-def show_validation_summary(relationships):
+def show_validation_summary(
+    relationships
+):
     accepted = sum(
         1
         for relation in relationships
@@ -258,7 +317,9 @@ def show_validation_summary(relationships):
         ) == "REJECT"
     )
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3 = (
+        st.columns(3)
+    )
 
     col1.metric(
         "Accepted",
@@ -280,56 +341,106 @@ def show_validation_summary(relationships):
 # RELATION MATCH HELPER
 # =========================================================
 
-def relation_matches(item, relation):
+def relation_matches(
+    item,
+    relation
+):
+    item_relation = str(
+        item.get(
+            "relationship",
+            ""
+        )
+    ).strip().upper()
+
+    relation_relation = str(
+        relation.get(
+            "relationship",
+            ""
+        )
+    ).strip().upper()
+
+    if item_relation != relation_relation:
+        return False
+
+    def normalize_endpoint(value, relationship, is_target=False):
+        value = str(value).strip()
+
+        if is_target:
+            entity_type = get_target_type_hint(
+                relationship,
+                value
+            )
+
+            if entity_type:
+                return clean_entity_endpoint(
+                    value,
+                    entity_type
+                ).lower()
+
+        if relationship == "TRANSFERRED_TO":
+            return normalize_account(
+                value
+            ).lower()
+
+        if relationship in {
+            "USED_VEHICLE",
+            "USES_VEHICLE",
+            "HAS_VEHICLE"
+        }:
+            return normalize_vehicle(
+                value
+            ).lower()
+
+        if relationship in {
+            "USES_PHONE",
+            "USED_PHONE",
+            "HAS_PHONE"
+        }:
+            return normalize_phone(
+                value
+            ).lower()
+
+        return normalize_person_key(
+            value
+        )
+
     return (
-        str(
+        normalize_endpoint(
             item.get(
                 "source_entity",
                 ""
-            )
-        ).strip().lower()
+            ),
+            item_relation,
+            is_target=False
+        )
         ==
-        str(
+        normalize_endpoint(
             relation.get(
                 "source_entity",
                 ""
-            )
-        ).strip().lower()
-
+            ),
+            relation_relation,
+            is_target=False
+        )
         and
-
-        str(
-            item.get(
-                "relationship",
-                ""
-            )
-        ).strip().upper()
-        ==
-        str(
-            relation.get(
-                "relationship",
-                ""
-            )
-        ).strip().upper()
-
-        and
-
-        str(
+        normalize_endpoint(
             item.get(
                 "target_entity",
                 ""
-            )
-        ).strip().lower()
+            ),
+            item_relation,
+            is_target=True
+        )
         ==
-        str(
+        normalize_endpoint(
             relation.get(
                 "target_entity",
                 ""
-            )
-        ).strip().lower()
-
+            ),
+            relation_relation,
+            is_target=True
+        )
         and
-
         str(
             item.get(
                 "source_file",
@@ -347,7 +458,7 @@ def relation_matches(item, relation):
 
 
 # =========================================================
-# HUMAN / INVESTIGATOR REVIEW UI
+# INVESTIGATOR REVIEW
 # =========================================================
 
 def show_human_review(
@@ -364,8 +475,8 @@ def show_human_review(
     )
 
     st.caption(
-        "Review extracted relationships before they are included "
-        "in the final graph-ready output."
+        "Review extracted relationships before they are "
+        "included in the final graph-ready output."
     )
 
     for index, relation in enumerate(
@@ -411,11 +522,9 @@ def show_human_review(
             "REVIEW"
         )
 
-        title = (
+        with st.expander(
             f"{source} → {relationship} → {target}"
-        )
-
-        with st.expander(title):
+        ):
             if decision == "ACCEPT":
                 st.success(
                     "Current status: ACCEPTED"
@@ -431,7 +540,9 @@ def show_human_review(
                     f"Current status: {decision}"
                 )
 
-            col_a, col_b = st.columns(2)
+            col_a, col_b = (
+                st.columns(2)
+            )
 
             with col_a:
                 st.write(
@@ -469,11 +580,16 @@ def show_human_review(
                 else "No evidence available."
             )
 
-            col1, col2 = st.columns(2)
+            col1, col2 = (
+                st.columns(2)
+            )
 
             relation_key = (
-                f"{key_prefix}_{index}_"
-                f"{source}_{relationship}_{target}"
+                f"{key_prefix}_"
+                f"{index}_"
+                f"{source}_"
+                f"{relationship}_"
+                f"{target}"
             )
 
             approve_key = (
@@ -484,9 +600,9 @@ def show_human_review(
                 f"reject_{relation_key}"
             )
 
-            # =================================================
+            # =============================================
             # APPROVE
-            # =================================================
+            # =============================================
 
             if col1.button(
                 "✅ Approve",
@@ -507,7 +623,9 @@ def show_human_review(
                         item,
                         relation
                     ):
-                        updated_item = dict(item)
+                        updated_item = (
+                            dict(item)
+                        )
 
                         updated_item[
                             "relation_status"
@@ -537,7 +655,8 @@ def show_human_review(
 
                 elif (
                     session_key == "file"
-                    and file_index is not None
+                    and
+                    file_index is not None
                 ):
                     st.session_state[
                         "file_results"
@@ -547,9 +666,9 @@ def show_human_review(
 
                 st.rerun()
 
-            # =================================================
+            # =============================================
             # REJECT
-            # =================================================
+            # =============================================
 
             if col2.button(
                 "❌ Reject",
@@ -575,7 +694,8 @@ def show_human_review(
 
                 elif (
                     session_key == "file"
-                    and file_index is not None
+                    and
+                    file_index is not None
                 ):
                     st.session_state[
                         "file_results"
@@ -623,8 +743,10 @@ def show_relationships(
         "evidence"
     ]
 
-    relationship_df = pd.DataFrame(
-        relationships
+    relationship_df = (
+        pd.DataFrame(
+            relationships
+        )
     )
 
     visible_columns = [
@@ -634,9 +756,11 @@ def show_relationships(
     ]
 
     if visible_columns:
-        relationship_df = relationship_df[
-            visible_columns
-        ]
+        relationship_df = (
+            relationship_df[
+                visible_columns
+            ]
+        )
 
     st.dataframe(
         relationship_df,
@@ -648,51 +772,106 @@ def show_relationships(
     )
 
     if allow_review:
-        relationships = show_human_review(
-            relationships,
-            key_prefix,
-            session_key=session_key,
-            file_index=file_index
+        relationships = (
+            show_human_review(
+                relationships,
+                key_prefix,
+                session_key=
+                    session_key,
+                file_index=
+                    file_index
+            )
         )
 
     return relationships
 
 
 # =========================================================
-# ENTITY RESOLUTION
+# ADVANCED ENTITY RESOLUTION DISPLAY
 # =========================================================
 
 def show_entity_resolution(
     structured_data,
-    title="Entity Resolution"
+    relationships,
+    title="Advanced Entity Resolution"
 ):
     st.subheader(
         title
     )
 
-    matches = resolve_person_entities(
-        structured_data.get(
-            "persons",
-            []
-        ),
-        structured_data.get(
-            "aliases",
-            []
-        )
+    records = build_person_records(
+        structured_data,
+        relationships
     )
 
-    if matches:
+    if not records:
+        st.info(
+            "No person records available for entity resolution."
+        )
+
+        return
+
+    st.caption(
+        "KRONOS compares names, phones, vehicles, accounts, "
+        "and locations to identify possible duplicate identities."
+    )
+
+    with st.expander(
+        "View Enriched Person Records"
+    ):
         st.dataframe(
             pd.DataFrame(
-                matches
+                records
             ),
             width="stretch"
         )
 
-    else:
+    matches = resolve_person_records(
+        records,
+        include_separate=False
+    )
+
+    if not matches:
         st.info(
             "No possible duplicate identities detected."
         )
+
+        return
+
+    st.dataframe(
+        pd.DataFrame(
+            matches
+        ),
+        width="stretch"
+    )
+
+    merge_count = sum(
+        1
+        for match in matches
+        if match.get(
+            "Decision"
+        ) == "MERGE"
+    )
+
+    review_count = sum(
+        1
+        for match in matches
+        if match.get(
+            "Decision"
+        ) == "REVIEW"
+    )
+
+    col1, col2 = st.columns(2)
+
+    col1.metric(
+        "Suggested Merges",
+        merge_count
+    )
+
+    col2.metric(
+        "Needs Identity Review",
+        review_count
+    )
 
 
 # =========================================================
@@ -706,43 +885,220 @@ def remove_relationship_duplicates(
     result = []
 
     for relation in relationships:
+        relationship = str(
+            relation.get(
+                "relationship",
+                ""
+            )
+        ).strip().upper()
+
+        source = str(
+            relation.get(
+                "source_entity",
+                ""
+            )
+        ).strip()
+
+        target = str(
+            relation.get(
+                "target_entity",
+                ""
+            )
+        ).strip()
+
+        if relationship == "TRANSFERRED_TO":
+            source_key = normalize_account(
+                source
+            )
+
+            target_key = normalize_account(
+                target
+            )
+
+        elif relationship in {
+            "USED_VEHICLE",
+            "USES_VEHICLE",
+            "HAS_VEHICLE"
+        }:
+            source_key = normalize_person_key(
+                source
+            )
+
+            target_key = normalize_vehicle(
+                target
+            )
+
+        elif relationship in {
+            "USES_PHONE",
+            "USED_PHONE",
+            "HAS_PHONE"
+        }:
+            source_key = normalize_person_key(
+                source
+            )
+
+            target_key = normalize_phone(
+                target
+            )
+
+        else:
+            source_key = normalize_person_key(
+                source
+            )
+
+            target_key = normalize_person_key(
+                target
+            )
+
         key = (
-            str(
-                relation.get(
-                    "source_entity",
-                    ""
-                )
-            ).strip().lower(),
-
-            str(
-                relation.get(
-                    "relationship",
-                    ""
-                )
-            ).strip().upper(),
-
-            str(
-                relation.get(
-                    "target_entity",
-                    ""
-                )
-            ).strip().lower(),
-
+            source_key,
+            relationship,
+            target_key,
             str(
                 relation.get(
                     "source_file",
                     ""
                 )
-            ).strip().lower()
+            ).strip().lower(),
+            relation.get(
+                "timestamp"
+            ),
+            relation.get(
+                "amount"
+            )
         )
 
         if key in seen:
             continue
 
-        seen.add(key)
-        result.append(relation)
+        seen.add(
+            key
+        )
+
+        result.append(
+            relation
+        )
 
     return result
+
+
+# =========================================================
+# NORMALIZATION DEBUG DISPLAY
+# =========================================================
+
+def show_normalization_debug(
+    relationships
+):
+    if not relationships:
+        return
+
+    rows = []
+
+    for relation in relationships:
+        relationship = str(
+            relation.get(
+                "relationship",
+                ""
+            )
+        ).strip().upper()
+
+        source = str(
+            relation.get(
+                "source_entity",
+                ""
+            )
+        ).strip()
+
+        target = str(
+            relation.get(
+                "target_entity",
+                ""
+            )
+        ).strip()
+
+        target_type = get_target_type_hint(
+            relationship,
+            target
+        )
+
+        normalized_source = source
+        normalized_target = target
+
+        if relationship == "TRANSFERRED_TO":
+            normalized_source = normalize_account(
+                source
+            )
+
+            normalized_target = normalize_account(
+                target
+            )
+
+        elif relationship in {
+            "USED_VEHICLE",
+            "USES_VEHICLE",
+            "HAS_VEHICLE"
+        }:
+            normalized_source = normalize_person_key(
+                source
+            )
+
+            normalized_target = normalize_vehicle(
+                target
+            )
+
+        elif relationship in {
+            "USES_PHONE",
+            "USED_PHONE",
+            "HAS_PHONE"
+        }:
+            normalized_source = normalize_person_key(
+                source
+            )
+
+            normalized_target = normalize_phone(
+                target
+            )
+
+        elif target_type:
+            normalized_target = clean_entity_endpoint(
+                target,
+                target_type
+            )
+
+        rows.append({
+            "source_entity":
+                source,
+
+            "relationship":
+                relationship,
+
+            "target_entity":
+                target,
+
+            "normalized_source":
+                normalized_source,
+
+            "normalized_target":
+                normalized_target,
+
+            "target_type_hint":
+                target_type or "UNKNOWN"
+        })
+
+    with st.expander(
+        "Normalization Debug"
+    ):
+        st.caption(
+            "This shows how KRONOS canonicalizes relationship "
+            "endpoints before graph-ready JSON formatting."
+        )
+
+        st.dataframe(
+            pd.DataFrame(
+                rows
+            ),
+            width="stretch"
+        )
 
 
 # =========================================================
@@ -825,12 +1181,16 @@ Rohit transferred Rs. 62,000 from account ACC310 to account ACC920.
 """
     )
 
-    button_col1, button_col2 = st.columns(
-        [1, 1]
+    button_col1, button_col2 = (
+        st.columns(
+            [1, 1]
+        )
     )
 
-    analyze_manual = button_col1.button(
-        "Analyze Investigation"
+    analyze_manual = (
+        button_col1.button(
+            "Analyze Investigation"
+        )
     )
 
     if button_col2.button(
@@ -838,10 +1198,6 @@ Rohit transferred Rs. 62,000 from account ACC310 to account ACC920.
     ):
         reset_manual_state()
         st.rerun()
-
-    # =====================================================
-    # ANALYZE
-    # =====================================================
 
     if analyze_manual:
         if not text.strip():
@@ -901,10 +1257,6 @@ Rohit transferred Rs. 62,000 from account ACC310 to account ACC920.
                 "manual_analyzed"
             ] = True
 
-    # =====================================================
-    # DISPLAY SAVED MANUAL RESULTS
-    # =====================================================
-
     if st.session_state.get(
         "manual_analyzed",
         False
@@ -917,14 +1269,18 @@ Rohit transferred Rs. 62,000 from account ACC310 to account ACC920.
             empty_structure()
         )
 
-        entity_rows = st.session_state.get(
-            "manual_entity_rows",
-            []
+        entity_rows = (
+            st.session_state.get(
+                "manual_entity_rows",
+                []
+            )
         )
 
-        relationships = st.session_state.get(
-            "manual_relationships",
-            []
+        relationships = (
+            st.session_state.get(
+                "manual_relationships",
+                []
+            )
         )
 
         st.subheader(
@@ -956,21 +1312,48 @@ Rohit transferred Rs. 62,000 from account ACC310 to account ACC920.
             structured_data
         )
 
-        relationships = show_relationships(
-            relationships,
-            "Relationship Extraction",
-            "manual",
-            session_key="manual",
-            allow_review=True
+        relationships = (
+            show_relationships(
+                relationships,
+                "Relationship Extraction",
+                "manual",
+                session_key=
+                    "manual",
+                allow_review=True
+            )
         )
 
         st.session_state[
             "manual_relationships"
         ] = relationships
 
+        # =============================================
+        # ADVANCED ENTITY RESOLUTION
+        # =============================================
+
         show_entity_resolution(
-            structured_data
+            structured_data,
+            st.session_state.get(
+                "manual_relationships",
+                []
+            ),
+            "Advanced Entity Resolution"
         )
+
+        # =============================================
+        # NORMALIZATION DEBUG
+        # =============================================
+
+        show_normalization_debug(
+            st.session_state.get(
+                "manual_relationships",
+                []
+            )
+        )
+
+        # =============================================
+        # GRAPH READY JSON
+        # =============================================
 
         st.markdown("---")
 
@@ -1003,16 +1386,18 @@ Rohit transferred Rs. 62,000 from account ACC310 to account ACC920.
 
 elif input_type == "Upload File":
 
-    uploaded_files = st.file_uploader(
-        "Upload Investigation Files",
-        type=[
-            "pdf",
-            "csv",
-            "xlsx",
-            "txt",
-            "json"
-        ],
-        accept_multiple_files=True
+    uploaded_files = (
+        st.file_uploader(
+            "Upload Investigation Files",
+            type=[
+                "pdf",
+                "csv",
+                "xlsx",
+                "txt",
+                "json"
+            ],
+            accept_multiple_files=True
+        )
     )
 
     if uploaded_files:
@@ -1026,12 +1411,16 @@ elif input_type == "Upload File":
                 f"{round(uploaded_file.size / 1024, 2)} KB"
             )
 
-        button_col1, button_col2 = st.columns(
-            [1, 1]
+        button_col1, button_col2 = (
+            st.columns(
+                [1, 1]
+            )
         )
 
-        analyze_files = button_col1.button(
-            "Analyze Files"
+        analyze_files = (
+            button_col1.button(
+                "Analyze Files"
+            )
         )
 
         if button_col2.button(
@@ -1039,10 +1428,6 @@ elif input_type == "Upload File":
         ):
             reset_file_state()
             st.rerun()
-
-        # =====================================================
-        # ANALYZE FILES
-        # =====================================================
 
         if analyze_files:
             file_results = []
@@ -1054,8 +1439,10 @@ elif input_type == "Upload File":
                     with st.spinner(
                         f"Reading {uploaded_file.name}..."
                     ):
-                        parsed_file = parse_file(
-                            uploaded_file
+                        parsed_file = (
+                            parse_file(
+                                uploaded_file
+                            )
                         )
 
                 except Exception as error:
@@ -1067,9 +1454,11 @@ elif input_type == "Upload File":
 
                     continue
 
-                extracted_text = parsed_file.get(
-                    "text",
-                    ""
+                extracted_text = (
+                    parsed_file.get(
+                        "text",
+                        ""
+                    )
                 )
 
                 if not extracted_text.strip():
@@ -1080,9 +1469,11 @@ elif input_type == "Upload File":
 
                     continue
 
-                file_type = parsed_file.get(
-                    "file_type",
-                    "unstructured"
+                file_type = (
+                    parsed_file.get(
+                        "file_type",
+                        "unstructured"
+                    )
                 )
 
                 with st.spinner(
@@ -1109,9 +1500,11 @@ elif input_type == "Upload File":
                     and
                     "dataframe" in parsed_file
                 ):
-                    dataframe = parsed_file[
-                        "dataframe"
-                    ]
+                    dataframe = (
+                        parsed_file[
+                            "dataframe"
+                        ]
+                    )
 
                     parsed_structure = (
                         parsed_file.get(
@@ -1212,9 +1605,11 @@ elif input_type == "Upload File":
         "files_analyzed",
         False
     ):
-        file_results = st.session_state.get(
-            "file_results",
-            []
+        file_results = (
+            st.session_state.get(
+                "file_results",
+                []
+            )
         )
 
         for file_index, result in enumerate(
@@ -1231,28 +1626,38 @@ elif input_type == "Upload File":
                 file_name
             )
 
-            extracted_text = result.get(
-                "text",
-                ""
+            extracted_text = (
+                result.get(
+                    "text",
+                    ""
+                )
             )
 
-            structured_data = result.get(
-                "structured_data",
-                empty_structure()
+            structured_data = (
+                result.get(
+                    "structured_data",
+                    empty_structure()
+                )
             )
 
-            entity_rows = result.get(
-                "entity_rows",
-                []
+            entity_rows = (
+                result.get(
+                    "entity_rows",
+                    []
+                )
             )
 
-            relationships = result.get(
-                "relationships",
-                []
+            relationships = (
+                result.get(
+                    "relationships",
+                    []
+                )
             )
 
-            dataframe = result.get(
-                "dataframe"
+            dataframe = (
+                result.get(
+                    "dataframe"
+                )
             )
 
             with st.expander(
@@ -1301,13 +1706,17 @@ elif input_type == "Upload File":
                 structured_data
             )
 
-            relationships = show_relationships(
-                relationships,
-                "Extracted Relationships",
-                f"file_{file_index}",
-                session_key="file",
-                file_index=file_index,
-                allow_review=True
+            relationships = (
+                show_relationships(
+                    relationships,
+                    "Extracted Relationships",
+                    f"file_{file_index}",
+                    session_key=
+                        "file",
+                    file_index=
+                        file_index,
+                    allow_review=True
+                )
             )
 
             st.session_state[
@@ -1316,15 +1725,6 @@ elif input_type == "Upload File":
                 "relationships"
             ] = relationships
 
-            show_entity_resolution(
-                structured_data,
-                "Entity Resolution"
-            )
-
-            st.subheader(
-                "Graph-Ready KRONOS JSON"
-            )
-
             latest_relationships = (
                 st.session_state[
                     "file_results"
@@ -1332,6 +1732,32 @@ elif input_type == "Upload File":
                     "relationships",
                     []
                 )
+            )
+
+            # =============================================
+            # ADVANCED ENTITY RESOLUTION
+            # =============================================
+
+            show_entity_resolution(
+                structured_data,
+                latest_relationships,
+                "Advanced Entity Resolution"
+            )
+
+            # =============================================
+            # NORMALIZATION DEBUG
+            # =============================================
+
+            show_normalization_debug(
+                latest_relationships
+            )
+
+            # =============================================
+            # FILE GRAPH READY JSON
+            # =============================================
+
+            st.subheader(
+                "Graph-Ready KRONOS JSON"
             )
 
             graph_ready_file = (
@@ -1346,8 +1772,7 @@ elif input_type == "Upload File":
             )
 
         # =================================================
-        # COMBINED RESULTS
-        # ONLY FOR 2 OR MORE FILES
+        # COMBINED RESULTS - ONLY 2+ FILES
         # =================================================
 
         if len(file_results) > 1:
@@ -1362,25 +1787,37 @@ elif input_type == "Upload File":
                 )
             )
 
+            combined_structure = (
+                empty_structure()
+            )
+
             for result in current_file_results:
-                file_name = result.get(
-                    "file_name",
-                    "unknown"
+                file_name = (
+                    result.get(
+                        "file_name",
+                        "unknown"
+                    )
                 )
 
-                structured_data = result.get(
-                    "structured_data",
-                    empty_structure()
+                structured_data = (
+                    result.get(
+                        "structured_data",
+                        empty_structure()
+                    )
                 )
 
-                relationships = result.get(
-                    "relationships",
-                    []
+                relationships = (
+                    result.get(
+                        "relationships",
+                        []
+                    )
                 )
 
-                entity_rows = result.get(
-                    "entity_rows",
-                    []
+                entity_rows = (
+                    result.get(
+                        "entity_rows",
+                        []
+                    )
                 )
 
                 all_structured_data.append({
@@ -1397,6 +1834,13 @@ elif input_type == "Upload File":
 
                 all_entity_rows.extend(
                     entity_rows
+                )
+
+                combined_structure = (
+                    merge_structured_data(
+                        combined_structure,
+                        structured_data
+                    )
                 )
 
             all_relationships = (
@@ -1435,25 +1879,27 @@ elif input_type == "Upload File":
                 allow_review=False
             )
 
-            combined_structure = (
-                empty_structure()
-            )
-
-            for item in all_structured_data:
-                combined_structure = (
-                    merge_structured_data(
-                        combined_structure,
-                        item.get(
-                            "data",
-                            {}
-                        )
-                    )
-                )
+            # =============================================
+            # CROSS-FILE ADVANCED ENTITY RESOLUTION
+            # =============================================
 
             show_entity_resolution(
                 combined_structure,
-                "Cross-File Entity Resolution"
+                all_relationships,
+                "Cross-File Advanced Entity Resolution"
             )
+
+            # =============================================
+            # NORMALIZATION DEBUG
+            # =============================================
+
+            show_normalization_debug(
+                all_relationships
+            )
+
+            # =============================================
+            # FINAL GRAPH READY JSON
+            # =============================================
 
             st.markdown("---")
 
@@ -1471,3 +1917,4 @@ elif input_type == "Upload File":
             st.json(
                 graph_ready_data
             )
+    
