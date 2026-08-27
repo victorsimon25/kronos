@@ -1,0 +1,93 @@
+/* ================================
+   ARIA INTELLIGENCE
+   Global Theme
+================================ */
+
+.stApp {
+    background-color: #0b0f14;
+    color: #e6edf3;
+}
+
+/* Main content */
+
+.main .block-container {
+    padding-top: 2rem;
+    padding-left: 3rem;
+    padding-right: 3rem;
+}
+
+
+/* Sidebar */
+
+section[data-testid="stSidebar"] {
+    background-color: #11161d;
+    border-right: 1px solid #242b35;
+}
+
+section[data-testid="stSidebar"] h1 {
+    color: #ffffff;
+}
+
+
+/* Headings */
+
+h1 {
+    font-size: 2.2rem !important;
+    font-weight: 700 !important;
+    color: #ffffff;
+}
+
+h2, h3 {
+    color: #e6edf3;
+}
+
+
+/* Buttons */
+
+.stButton > button {
+    border-radius: 6px;
+    border: 1px solid #303945;
+    padding: 0.6rem 1.2rem;
+    font-weight: 600;
+}
+
+
+/* Primary button */
+
+.stButton > button[kind="primary"] {
+    background-color: #2563eb;
+    border: none;
+}
+
+
+/* Select boxes */
+
+div[data-baseweb="select"] > div {
+    background-color: #11161d;
+    border-color: #303945;
+}
+
+
+/* Cards */
+
+.aria-card {
+    background-color: #11161d;
+    border: 1px solid #242b35;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+
+/* Divider */
+
+hr {
+    border-color: #242b35;
+}
+
+
+/* Caption */
+
+.stCaption {
+    color: #8b949e;
+}
