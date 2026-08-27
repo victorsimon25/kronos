@@ -7,7 +7,7 @@ from PyPDF2 import PdfReader
 def parse_csv(file_bytes: bytes) -> dict:
     df = pd.read_csv(io.BytesIO(file_bytes))
 
-    # Convert all values to Python objects and replace NaN with None.
+    # Convert Pandas NaN values to None for valid JSON.
     df = df.astype(object).where(pd.notna(df), None)
 
     rows = df.to_dict(orient="records")
@@ -44,6 +44,15 @@ def parse_pdf(file_bytes: bytes) -> dict:
     }
 
 
+def parse_txt(file_bytes: bytes) -> dict:
+    text = file_bytes.decode("utf-8")
+
+    return {
+        "type": "txt",
+        "text": text
+    }
+
+
 def parse_file(filename: str, file_bytes: bytes) -> dict:
     filename = filename.lower()
 
@@ -53,4 +62,7 @@ def parse_file(filename: str, file_bytes: bytes) -> dict:
     if filename.endswith(".pdf"):
         return parse_pdf(file_bytes)
 
-    raise ValueError("Only CSV and PDF files are supported")
+    if filename.endswith(".txt"):
+        return parse_txt(file_bytes)
+
+    raise ValueError("Only CSV, PDF, and TXT files are supported")
