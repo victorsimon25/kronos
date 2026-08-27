@@ -1,106 +1,286 @@
 import os
-from pathlib import Path
-
-from dotenv import load_dotenv
 from neo4j import GraphDatabase
 
+# Load credentials from environment variables (with fallback for development)
+NEO4J_URI = os.getenv("NEO4J_URI", "neo4j+s://f3d09a64.databases.neo4j.io")
+NEO4J_USER = os.getenv("NEO4J_USER", "f3d09a64")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "tXNOIPxX9P7V3NGewbTVjWM4L3L-_snuYIGBno8PKy0")
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / ".env")
+driver = GraphDatabase.driver(
+    NEO4J_URI,
+    auth=(NEO4J_USER, NEO4J_PASSWORD)
+)
+
+ALLOWED_ENTITY_TYPES = {
+    "PERSON",
+    "PHONE",
+    "VEHICLE",
+    "LOCATION",
+    "ORGANIZATION",
+    "BANK_ACCOUNT",
+    "EVENT"
+}
 
 
-class Neo4jService:
-    def __init__(self):
-        self.uri = os.getenv("NEO4J_URI")
-        self.username = os.getenv("NEO4J_USERNAME")
-        self.password = os.getenv("NEO4J_PASSWORD")
+def create_entity(driver, entity):
 
-        if not self.uri or not self.username or not self.password:
-            raise ValueError(
-                "Neo4j environment variables are missing. "
-                "Check backend/.env"
-            )
+    entity_id = entity["id"]
+    entity_type = entity["type"]
 
-        self.driver = GraphDatabase.driver(
-            self.uri,
-            auth=(self.username, self.password)
+    if entity_type not in ALLOWED_ENTITY_TYPES:
+        raise ValueError(f"Invalid entity type: {entity_type}")
+
+    properties = {
+        key: value
+        for key, value in entity.items()
+        if key not in ["id", "type"]
+    }
+
+    query = f"""
+    CREATE (n:{entity_type})
+    SET n.id = $id
+    SET n += $properties
+    RETURN n
+    """
+
+    with driver.session() as session:
+        result = session.run(
+            query,
+            id=entity_id,
+            properties=properties
         )
 
-    def verify_connection(self):
-        self.driver.verify_connectivity()
-        return True
+        record = result.single()
 
-    def close(self):
-        self.driver.close()
+        return record["n"]
 
-    def create_criminal_record(self, record: dict):
-        query = """
-        MERGE (p:Person {name: $person_name})
 
-        SET p.alias = $alias
 
-        MERGE (c:Case {id: $case_id})
+def find_entity(driver, entity_type, properties):
 
-        SET c.offense = $offense,
-            c.date = $date
+    if entity_type not in ALLOWED_ENTITY_TYPES:
+        raise ValueError(f"Invalid entity type: {entity_type}")
 
-        MERGE (p)-[:INVOLVED_IN]->(c)
+    query = f"""
+    MATCH (n:{entity_type})
+    WHERE all(key IN keys($properties)
+              WHERE n[key] = $properties[key])
+    RETURN n
+    """
 
-        RETURN p, c
-        """
+    with driver.session() as session:
+        result = session.run(
+            query,
+            properties=properties
+        )
 
-        with self.driver.session() as session:
-            result = session.run(
-                query,
-                person_name=record.get("person_name"),
-                alias=record.get("alias"),
-                case_id=record.get("case_id"),
-                offense=record.get("offense"),
-                date=record.get("date")
+        return [record["n"] for record in result]
+
+
+def create_relationship(driver, relationship):
+
+    source_id = relationship["source_id"]
+    target_id = relationship["target_id"]
+    relationship_type = relationship["type"]
+
+    # if relationship_type not in ALLOWED_RELATIONSHIPS:
+    #     raise ValueError(
+    #         f"Invalid relationship type: {relationship_type}"
+    #     )
+
+    query = f"""
+    MATCH (source {{id: $source_id}})
+    MATCH (target {{id: $target_id}})
+    CREATE (source)-[r:{relationship_type}]->(target)
+    SET r.confidence = $confidence
+    SET r.evidence_id = $evidence_id
+    RETURN source, r, target
+    """
+
+    with driver.session() as session:
+        result = session.run(
+            query,
+            source_id=source_id,
+            target_id=target_id,
+            confidence=relationship.get("confidence"),
+            evidence_id=relationship.get("evidence_id")
+        )
+
+        record = result.single()
+
+        if record is None:
+            raise ValueError(
+                f"Source '{source_id}' or target '{target_id}' not found"
             )
 
-            return result.single() is not None
+        return record
 
-    def create_records(self, records: list[dict]):
-        count = 0
+def find_network(driver, entity_id, hop_count=1):
+    """
+    Find all entities within a specified number of hops from the source entity.
 
-        for record in records:
-            self.create_criminal_record(record)
-            count += 1
+    Args:
+        driver: Neo4j driver instance
+        entity_id: ID of the source entity
+        hop_count: Number of hops/degrees of separation (default: 1)
+                  1 = direct connections only
+                  2 = connections and their connections
+                  etc.
 
-        return count
+    Returns:
+        List of paths with connected entities and hop distance
+    """
 
-    def get_person(self, name: str):
-        query = """
-        MATCH (p:Person)
-        WHERE toLower(p.name) = toLower($name)
-        OPTIONAL MATCH (p)-[:INVOLVED_IN]->(c:Case)
+    query = f"""
+    MATCH path = (start {{id: $entity_id}})-[*1..{hop_count}]-(connected)
+    WITH start, connected, relationships(path) as rels, length(path) as hops
+    RETURN DISTINCT start, connected, hops, rels
+    ORDER BY hops, connected.id
+    """
 
-        RETURN
-            p.name AS name,
-            p.alias AS alias,
-            collect({
-                case_id: c.id,
-                offense: c.offense,
-                date: c.date
-            }) AS cases
-        """
+    with driver.session() as session:
+        result = session.run(
+            query,
+            entity_id=entity_id
+        )
 
-        with self.driver.session() as session:
-            result = session.run(query, name=name)
-            record = result.single()
+        return [
+            {
+                "start": dict(record["start"]),
+                "connected": dict(record["connected"]),
+                "hop_distance": record["hops"],
+                "relationships": [
+                    {
+                        "type": rel.type,
+                        "properties": dict(rel)
+                    }
+                    for rel in record["rels"]
+                ]
+            }
+            for record in result
+        ]
+    
+def find_shortest_path(driver, source_id, target_id):
 
-            if not record:
-                return None
+    query = """
+    MATCH (source {id: $source_id})
+    MATCH (target {id: $target_id}) 
+    MATCH path = shortestPath((source)-[*]-(target))
+    RETURN path
+    """
 
-            return record.data()
+    with driver.session() as session:
+        result = session.run(
+            query,
+            source_id=source_id,
+            target_id=target_id
+        )
 
+        record = result.single()
 
-def verify_neo4j_connection():
-    graph = Neo4jService()
+        if record is None:
+            return "Not found"
 
-    try:
-        graph.verify_connection()
-        return True
-    finally:
-        graph.close()
+        path = record["path"]
+
+        nodes = [
+            {
+                "id": node["id"],
+                "type": list(node.labels)[0],
+                "properties": dict(node)
+            }
+            for node in path.nodes
+        ]
+
+        relationships = [
+            {
+                "type": relationship.type,
+                "source": relationship.start_node["id"],
+                "target": relationship.end_node["id"]
+            }
+            for relationship in path.relationships
+        ]
+
+        return {
+            "nodes": nodes,
+            "relationships": relationships
+        }
+
+def find_most_connected_person(driver, limit=1):
+    """
+    Find the most connected person(s) in the database.
+    Returns distinct persons by ID, aggregating connections across duplicate nodes.
+    """
+
+    query = """
+    MATCH (p:PERSON)
+    OPTIONAL MATCH (p)-[r]-()
+    WITH p.id as person_id,
+         collect(DISTINCT p)[0] as person_node,
+         count(DISTINCT r) as connection_count
+    WHERE connection_count > 0
+    RETURN person_node as p, connection_count
+    ORDER BY connection_count DESC, person_id
+    LIMIT $limit
+    """
+
+    with driver.session() as session:
+        result = session.run(
+            query,
+            limit=limit
+        )
+
+        return [
+            {
+                "person": dict(record["p"]),
+                "connection_count": record["connection_count"]
+            }
+            for record in result
+        ]
+
+def close_connection():
+    """Close the Neo4j database connection. Call this when shutting down the application."""
+    if driver:
+        driver.close()
+        print("Neo4j connection closed")
+
+# # ---------------- TEST ----------------
+ 
+
+# test_relationships = [
+#     {
+#         "source_id": "P001",
+#         "target_id": "P002",
+#         "type": "ASSOCIATED_WITH",
+#         "confidence": 0.9,
+#         "evidence_id": "EV001"
+#     },
+#     {
+#         "source_id": "P001",
+#         "target_id": "P003",
+#         "type": "CALLED",
+#         "confidence": 0.8,
+#         "evidence_id": "EV002"
+#     },
+#     {
+#         "source_id": "P001",
+#         "target_id": "V001",
+#         "type": "OWNS",
+#         "confidence": 0.95,
+#         "evidence_id": "EV003"
+#     },
+#     {
+#         "source_id": "P001",
+#         "target_id": "PH001",
+#         "type": "CALLED",
+#         "confidence": 0.85,
+#         "evidence_id": "EV004"
+#     },
+#     {
+#         "source_id": "P001",
+#         "target_id": "L001",
+#         "type": "LOCATED_AT",
+#         "confidence": 0.9,
+#         "evidence_id": "EV005"
+#     }
+# ]
