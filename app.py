@@ -2,23 +2,37 @@ import streamlit as st
 import pandas as pd
 
 from parser import parse_file
-from extractor import extract_entities, structure_entities
-from entity_resolution import resolve_person_entities
+from extractor import (
+    extract_entities,
+    structure_entities
+)
+from entity_resolution import (
+    resolve_person_entities
+)
 
 from relationship_extractor import (
     extract_relationships_from_dataframe
 )
 
-from hybrid_relationship_extractor import (
-    extract_hybrid_relationships
+from dynamic_relationship_extractor import (
+    extract_dynamic_relationships
 )
 
+from relationship_postprocessor import (
+    postprocess_relationships
+)
+
+
+# =========================================================
+# PAGE CONFIG
+# =========================================================
 
 st.set_page_config(
     page_title="KRONOS",
     page_icon="🕸️",
     layout="wide"
 )
+
 
 st.title("KRONOS")
 
@@ -28,13 +42,40 @@ st.caption(
 
 st.markdown("---")
 
-st.subheader("Investigation Data Input")
+st.subheader(
+    "Investigation Data Input"
+)
+
 
 input_type = st.radio(
     "Choose input method",
-    ["Enter Text", "Upload File"],
+    [
+        "Enter Text",
+        "Upload File"
+    ],
     horizontal=True
 )
+
+
+# =========================================================
+# EMPTY STRUCTURE HELPER
+# =========================================================
+
+def empty_structure():
+
+    return {
+        "persons": [],
+        "aliases": [],
+        "phones": [],
+        "locations": [],
+        "vehicles": [],
+        "accounts": [],
+        "organizations": [],
+        "dates": [],
+        "amounts": [],
+        "incidents": [],
+        "fir_numbers": []
+    }
 
 
 # =========================================================
@@ -56,7 +97,10 @@ Ravi Kumar used vehicle TN01AB1234.
 """
     )
 
-    if st.button("Analyze Investigation"):
+
+    if st.button(
+        "Analyze Investigation"
+    ):
 
         if not text.strip():
 
@@ -66,9 +110,9 @@ Ravi Kumar used vehicle TN01AB1234.
 
         else:
 
-            # =====================================================
+            # =================================================
             # ENTITY EXTRACTION
-            # =====================================================
+            # =================================================
 
             with st.spinner(
                 "KRONOS is extracting entities..."
@@ -78,13 +122,8 @@ Ravi Kumar used vehicle TN01AB1234.
                     text
                 )
 
-            if not entities:
 
-                st.warning(
-                    "No entities detected."
-                )
-
-            else:
+            if entities:
 
                 st.success(
                     "Entity extraction completed."
@@ -95,17 +134,24 @@ Ravi Kumar used vehicle TN01AB1234.
                 for entity in entities:
 
                     entity_data.append({
-                        "Entity": entity["text"],
-                        "Type": entity["label"],
-                        "Confidence": round(
-                            entity["score"],
-                            2
-                        )
+                        "Entity":
+                            entity["text"],
+
+                        "Type":
+                            entity["label"],
+
+                        "Confidence":
+                            round(
+                                entity["score"],
+                                2
+                            )
                     })
+
 
                 entity_df = pd.DataFrame(
                     entity_data
                 )
+
 
                 st.subheader(
                     "Extracted Entities"
@@ -113,13 +159,9 @@ Ravi Kumar used vehicle TN01AB1234.
 
                 st.dataframe(
                     entity_df,
-                    use_container_width=True
+                    width="stretch"
                 )
 
-
-                # =================================================
-                # STRUCTURED ENTITY DATA
-                # =================================================
 
                 structured_data = (
                     structure_entities(
@@ -127,161 +169,234 @@ Ravi Kumar used vehicle TN01AB1234.
                     )
                 )
 
-                st.subheader(
-                    "Structured Investigation Data"
+            else:
+
+                st.warning(
+                    "No entities detected."
                 )
 
-                st.json(
-                    structured_data
+                structured_data = (
+                    empty_structure()
                 )
 
 
-                # =================================================
-                # HYBRID RELATIONSHIP EXTRACTION
-                # =================================================
+            # =================================================
+            # STRUCTURED DATA
+            # =================================================
 
-                st.subheader(
-                    "Relationship Extraction"
-                )
-
-                with st.spinner(
-                    "KRONOS is analyzing relationships..."
-                ):
-
-                    relationships = (
-                        extract_hybrid_relationships(
-                            text,
-                            source_file="manual_input"
-                        )
-                    )
-
-                if relationships:
-
-                    relationship_df = (
-                        pd.DataFrame(
-                            relationships
-                        )
-                    )
-
-                    st.dataframe(
-                        relationship_df,
-                        use_container_width=True
-                    )
-
-                else:
-
-                    st.info(
-                        "No relationships detected."
-                    )
-
-
-                # =================================================
-                # ENTITY RESOLUTION
-                # =================================================
-
-                st.subheader(
-                    "Entity Resolution"
-                )
-
-                matches = (
-                    resolve_person_entities(
-                        structured_data["persons"],
-                        structured_data["aliases"]
-                    )
-                )
-
-                if matches:
-
-                    match_df = pd.DataFrame(
-                        matches
-                    )
-
-                    st.dataframe(
-                        match_df,
-                        use_container_width=True
-                    )
-
-                else:
-
-                    st.info(
-                        "No possible duplicate identities detected."
-                    )
-
-
-# =========================================================
-# FILE UPLOAD
-# =========================================================
-
-elif input_type == "Upload File":
-
-    uploaded_file = st.file_uploader(
-        "Upload Investigation File",
-        type=[
-            "pdf",
-            "csv",
-            "xlsx",
-            "txt",
-            "json"
-        ]
-    )
-
-    if uploaded_file:
-
-        st.success(
-            "File uploaded successfully."
-        )
-
-        st.write(
-            "File Name:",
-            uploaded_file.name
-        )
-
-        st.write(
-            "File Size:",
-            round(
-                uploaded_file.size / 1024,
-                2
-            ),
-            "KB"
-        )
-
-        if st.button("Analyze File"):
-
-            # =====================================================
-            # PARSING
-            # =====================================================
-
-            with st.spinner(
-                "Reading investigation data..."
-            ):
-
-                parsed_file = parse_file(
-                    uploaded_file
-                )
-
-            extracted_text = (
-                parsed_file.get(
-                    "text",
-                    ""
-                )
+            st.subheader(
+                "Structured Investigation Data"
             )
 
-            if not extracted_text.strip():
+            st.json(
+                structured_data
+            )
 
-                st.error(
-                    "Unable to extract readable data."
+
+            # =================================================
+            # DYNAMIC RELATIONSHIP EXTRACTION
+            # =================================================
+
+            st.subheader(
+                "Relationship Extraction"
+            )
+
+
+            with st.spinner(
+                "KRONOS is analyzing relationships..."
+            ):
+
+                relationships = (
+                    extract_dynamic_relationships(
+                        text,
+                        source_file=
+                            "manual_input"
+                    )
+                )
+
+
+                relationships = (
+                    postprocess_relationships(
+                        relationships,
+                        text,
+                        structured_data[
+                            "persons"
+                        ]
+                    )
+                )
+
+
+            if relationships:
+
+                relationship_df = (
+                    pd.DataFrame(
+                        relationships
+                    )
+                )
+
+
+                st.dataframe(
+                    relationship_df,
+                    width="stretch"
                 )
 
             else:
 
-                st.subheader(
-                    "Parsed File Content"
+                st.info(
+                    "No relationships detected."
                 )
 
+
+            # =================================================
+            # ENTITY RESOLUTION
+            # =================================================
+
+            st.subheader(
+                "Entity Resolution"
+            )
+
+
+            matches = (
+                resolve_person_entities(
+                    structured_data[
+                        "persons"
+                    ],
+                    structured_data[
+                        "aliases"
+                    ]
+                )
+            )
+
+
+            if matches:
+
+                match_df = (
+                    pd.DataFrame(
+                        matches
+                    )
+                )
+
+                st.dataframe(
+                    match_df,
+                    width="stretch"
+                )
+
+            else:
+
+                st.info(
+                    "No possible duplicate identities detected."
+                )
+
+
+# =========================================================
+# MULTI-FILE UPLOAD
+# =========================================================
+
+elif input_type == "Upload File":
+
+    uploaded_files = (
+        st.file_uploader(
+            "Upload Investigation Files",
+            type=[
+                "pdf",
+                "csv",
+                "xlsx",
+                "txt",
+                "json"
+            ],
+            accept_multiple_files=True
+        )
+    )
+
+
+    if uploaded_files:
+
+        st.success(
+            f"{len(uploaded_files)} file(s) uploaded successfully."
+        )
+
+
+        st.subheader(
+            "Uploaded Files"
+        )
+
+
+        for uploaded_file in uploaded_files:
+
+            st.write(
+                f"{uploaded_file.name} - "
+                f"{round(uploaded_file.size / 1024, 2)} KB"
+            )
+
+
+        if st.button(
+            "Analyze Files"
+        ):
+
+            all_relationships = []
+
+            all_structured_data = []
+
+            all_entities = []
+
+
+            # =================================================
+            # PROCESS EACH FILE
+            # =================================================
+
+            for uploaded_file in uploaded_files:
+
+                st.markdown("---")
+
+                st.subheader(
+                    f"Processing: {uploaded_file.name}"
+                )
+
+
+                # =============================================
+                # PARSE FILE
+                # =============================================
+
+                with st.spinner(
+                    f"Reading {uploaded_file.name}..."
+                ):
+
+                    parsed_file = parse_file(
+                        uploaded_file
+                    )
+
+
+                extracted_text = (
+                    parsed_file.get(
+                        "text",
+                        ""
+                    )
+                )
+
+
+                if not extracted_text.strip():
+
+                    st.warning(
+                        f"Unable to extract readable content from "
+                        f"{uploaded_file.name}"
+                    )
+
+                    continue
+
+
                 st.text_area(
-                    "Content",
+                    f"Parsed Content - {uploaded_file.name}",
                     extracted_text,
-                    height=250
+                    height=180,
+                    key=
+                        f"content_{uploaded_file.name}"
+                )
+
+
+                relationships = []
+
+                structured_data = (
+                    empty_structure()
                 )
 
 
@@ -291,13 +406,11 @@ elif input_type == "Upload File":
                 # =================================================
 
                 if (
-                    parsed_file["file_type"]
+                    parsed_file[
+                        "file_type"
+                    ]
                     == "structured"
                 ):
-
-                    st.success(
-                        "Structured file parsed directly."
-                    )
 
                     structured_data = (
                         parsed_file[
@@ -305,8 +418,18 @@ elif input_type == "Upload File":
                         ]
                     )
 
+
+                    all_structured_data.append({
+                        "file_name":
+                            uploaded_file.name,
+
+                        "data":
+                            structured_data
+                    })
+
+
                     st.subheader(
-                        "Structured Investigation Data"
+                        f"Structured Data - {uploaded_file.name}"
                     )
 
                     st.json(
@@ -315,102 +438,81 @@ elif input_type == "Upload File":
 
 
                     # =============================================
-                    # STRUCTURED RELATIONSHIP EXTRACTION
+                    # CSV / XLSX
                     # =============================================
-
-                    st.subheader(
-                        "Relationship Extraction"
-                    )
-
-                    relationships = []
 
                     if (
                         "dataframe"
                         in parsed_file
                     ):
 
+                        dataframe = (
+                            parsed_file[
+                                "dataframe"
+                            ]
+                        )
+
+
+                        st.subheader(
+                            f"Table Preview - {uploaded_file.name}"
+                        )
+
+
+                        st.dataframe(
+                            dataframe,
+                            width="stretch"
+                        )
+
+
                         relationships = (
                             extract_relationships_from_dataframe(
-                                parsed_file[
-                                    "dataframe"
-                                ],
-                                source_file=uploaded_file.name
+                                dataframe,
+                                source_file=
+                                    uploaded_file.name
                             )
                         )
 
+
+                        relationships = (
+                            postprocess_relationships(
+                                relationships,
+                                extracted_text,
+                                structured_data[
+                                    "persons"
+                                ]
+                            )
+                        )
+
+
+                    # =============================================
+                    # JSON
+                    # =============================================
+
                     else:
 
-                        # JSON does not have a dataframe.
-                        # Use hybrid extraction on serialized JSON text.
-
                         with st.spinner(
-                            "KRONOS is analyzing relationships..."
+                            f"Extracting relationships from "
+                            f"{uploaded_file.name}..."
                         ):
 
                             relationships = (
-                                extract_hybrid_relationships(
+                                extract_dynamic_relationships(
                                     extracted_text,
-                                    source_file=uploaded_file.name
+                                    source_file=
+                                        uploaded_file.name
                                 )
                             )
 
-                    if relationships:
 
-                        relationship_df = (
-                            pd.DataFrame(
-                                relationships
+                            relationships = (
+                                postprocess_relationships(
+                                    relationships,
+                                    extracted_text,
+                                    structured_data[
+                                        "persons"
+                                    ]
+                                )
                             )
-                        )
-
-                        st.dataframe(
-                            relationship_df,
-                            use_container_width=True
-                        )
-
-                    else:
-
-                        st.info(
-                            "No relationships detected."
-                        )
-
-
-                    # =============================================
-                    # ENTITY RESOLUTION
-                    # =============================================
-
-                    st.subheader(
-                        "Entity Resolution"
-                    )
-
-                    matches = (
-                        resolve_person_entities(
-                            structured_data[
-                                "persons"
-                            ],
-                            structured_data[
-                                "aliases"
-                            ]
-                        )
-                    )
-
-                    if matches:
-
-                        match_df = (
-                            pd.DataFrame(
-                                matches
-                            )
-                        )
-
-                        st.dataframe(
-                            match_df,
-                            use_container_width=True
-                        )
-
-                    else:
-
-                        st.info(
-                            "No possible duplicate identities detected."
-                        )
 
 
                 # =================================================
@@ -425,7 +527,8 @@ elif input_type == "Upload File":
                     # =============================================
 
                     with st.spinner(
-                        "KRONOS is extracting entities..."
+                        f"Extracting entities from "
+                        f"{uploaded_file.name}..."
                     ):
 
                         entities = (
@@ -434,23 +537,17 @@ elif input_type == "Upload File":
                             )
                         )
 
-                    if not entities:
 
-                        st.warning(
-                            "No entities detected."
-                        )
-
-                    else:
-
-                        st.success(
-                            "Entity extraction completed."
-                        )
+                    if entities:
 
                         entity_data = []
 
                         for entity in entities:
 
                             entity_data.append({
+                                "File":
+                                    uploaded_file.name,
+
                                 "Entity":
                                     entity["text"],
 
@@ -466,25 +563,30 @@ elif input_type == "Upload File":
                                     )
                             })
 
+
+                        all_entities.extend(
+                            entity_data
+                        )
+
+
                         entity_df = (
                             pd.DataFrame(
                                 entity_data
                             )
                         )
 
+
                         st.subheader(
-                            "Extracted Entities"
+                            f"Extracted Entities - "
+                            f"{uploaded_file.name}"
                         )
+
 
                         st.dataframe(
                             entity_df,
-                            use_container_width=True
+                            width="stretch"
                         )
 
-
-                        # =========================================
-                        # STRUCTURED ENTITIES
-                        # =========================================
 
                         structured_data = (
                             structure_entities(
@@ -492,88 +594,318 @@ elif input_type == "Upload File":
                             )
                         )
 
-                        st.subheader(
-                            "Structured Investigation Data"
+
+                    else:
+
+                        st.info(
+                            f"No entities detected in "
+                            f"{uploaded_file.name}"
                         )
 
-                        st.json(
+                        structured_data = (
+                            empty_structure()
+                        )
+
+
+                    all_structured_data.append({
+
+                        "file_name":
+                            uploaded_file.name,
+
+                        "data":
                             structured_data
+                    })
+
+
+                    st.subheader(
+                        f"Structured Data - "
+                        f"{uploaded_file.name}"
+                    )
+
+
+                    st.json(
+                        structured_data
+                    )
+
+
+                    # =============================================
+                    # DYNAMIC RELATIONSHIP EXTRACTION
+                    # =============================================
+
+                    with st.spinner(
+                        f"Extracting relationships from "
+                        f"{uploaded_file.name}..."
+                    ):
+
+                        relationships = (
+                            extract_dynamic_relationships(
+                                extracted_text,
+                                source_file=
+                                    uploaded_file.name
+                            )
                         )
 
 
-                        # =========================================
-                        # HYBRID RELATIONSHIP EXTRACTION
-                        # =========================================
-
-                        st.subheader(
-                            "Relationship Extraction"
-                        )
-
-                        with st.spinner(
-                            "KRONOS is analyzing relationships..."
-                        ):
-
-                            relationships = (
-                                extract_hybrid_relationships(
-                                    extracted_text,
-                                    source_file=uploaded_file.name
-                                )
-                            )
-
-                        if relationships:
-
-                            relationship_df = (
-                                pd.DataFrame(
-                                    relationships
-                                )
-                            )
-
-                            st.dataframe(
-                                relationship_df,
-                                use_container_width=True
-                            )
-
-                        else:
-
-                            st.info(
-                                "No relationships detected."
-                            )
-
-
-                        # =========================================
-                        # ENTITY RESOLUTION
-                        # =========================================
-
-                        st.subheader(
-                            "Entity Resolution"
-                        )
-
-                        matches = (
-                            resolve_person_entities(
+                        relationships = (
+                            postprocess_relationships(
+                                relationships,
+                                extracted_text,
                                 structured_data[
                                     "persons"
-                                ],
-                                structured_data[
-                                    "aliases"
                                 ]
                             )
                         )
 
-                        if matches:
 
-                            match_df = (
-                                pd.DataFrame(
-                                    matches
-                                )
+                # =================================================
+                # SHOW RELATIONSHIPS FOR EACH FILE
+                # =================================================
+
+                if relationships:
+
+                    relationship_df = (
+                        pd.DataFrame(
+                            relationships
+                        )
+                    )
+
+
+                    st.subheader(
+                        f"Relationships - "
+                        f"{uploaded_file.name}"
+                    )
+
+
+                    st.dataframe(
+                        relationship_df,
+                        width="stretch"
+                    )
+
+
+                    all_relationships.extend(
+                        relationships
+                    )
+
+                else:
+
+                    st.info(
+                        f"No relationships detected in "
+                        f"{uploaded_file.name}"
+                    )
+
+
+            # =====================================================
+            # COMBINED RESULTS
+            # =====================================================
+
+            st.markdown("---")
+
+            st.header(
+                "Combined Investigation Results"
+            )
+
+
+            # =====================================================
+            # COMBINED STRUCTURED DATA
+            # =====================================================
+
+            st.subheader(
+                "Combined Structured Data"
+            )
+
+            st.json(
+                all_structured_data
+            )
+
+
+            # =====================================================
+            # COMBINED ENTITIES
+            # =====================================================
+
+            if all_entities:
+
+                st.subheader(
+                    "Combined Extracted Entities"
+                )
+
+
+                combined_entity_df = (
+                    pd.DataFrame(
+                        all_entities
+                    )
+                )
+
+
+                st.dataframe(
+                    combined_entity_df,
+                    width="stretch"
+                )
+
+
+            # =====================================================
+            # COMBINED RELATIONSHIPS
+            # =====================================================
+
+            st.subheader(
+                "Combined Relationships"
+            )
+
+
+            if all_relationships:
+
+                unique_relationships = []
+
+                seen_relationships = set()
+
+
+                for relationship in all_relationships:
+
+                    key = (
+                        str(
+                            relationship.get(
+                                "source_entity",
+                                ""
                             )
+                        ).lower(),
 
-                            st.dataframe(
-                                match_df,
-                                use_container_width=True
+                        relationship.get(
+                            "relationship",
+                            ""
+                        ),
+
+                        str(
+                            relationship.get(
+                                "target_entity",
+                                ""
                             )
+                        ).lower(),
 
-                        else:
+                        relationship.get(
+                            "source_file",
+                            ""
+                        )
+                    )
 
-                            st.info(
-                                "No possible duplicate identities detected."
-                            )
+
+                    if (
+                        key
+                        in seen_relationships
+                    ):
+
+                        continue
+
+
+                    seen_relationships.add(
+                        key
+                    )
+
+
+                    unique_relationships.append(
+                        relationship
+                    )
+
+
+                all_relationships = (
+                    unique_relationships
+                )
+
+
+                combined_relationship_df = (
+                    pd.DataFrame(
+                        all_relationships
+                    )
+                )
+
+
+                st.dataframe(
+                    combined_relationship_df,
+                    width="stretch"
+                )
+
+            else:
+
+                st.info(
+                    "No relationships detected across uploaded files."
+                )
+
+
+            # =====================================================
+            # CROSS-FILE ENTITY RESOLUTION
+            # =====================================================
+
+            st.subheader(
+                "Cross-File Entity Resolution"
+            )
+
+
+            combined_persons = []
+
+            combined_aliases = []
+
+
+            for item in all_structured_data:
+
+                data = item.get(
+                    "data",
+                    {}
+                )
+
+
+                combined_persons.extend(
+                    data.get(
+                        "persons",
+                        []
+                    )
+                )
+
+
+                combined_aliases.extend(
+                    data.get(
+                        "aliases",
+                        []
+                    )
+                )
+
+
+            combined_persons = list(
+                dict.fromkeys(
+                    combined_persons
+                )
+            )
+
+
+            combined_aliases = list(
+                dict.fromkeys(
+                    combined_aliases
+                )
+            )
+
+
+            matches = (
+                resolve_person_entities(
+                    combined_persons,
+                    combined_aliases
+                )
+            )
+
+
+            if matches:
+
+                match_df = (
+                    pd.DataFrame(
+                        matches
+                    )
+                )
+
+
+                st.dataframe(
+                    match_df,
+                    width="stretch"
+                )
+
+            else:
+
+                st.info(
+                    "No possible duplicate identities detected "
+                    "across uploaded files."
+                )
