@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pydantic
+neo4j
+pandas
+PyPDF2
+python-dotenv
+python-multipart
+certifi
