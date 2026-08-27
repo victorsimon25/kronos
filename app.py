@@ -1,11 +1,17 @@
 import streamlit as st
 import pandas as pd
 
+from graph_ready_formatter import (
+    build_graph_ready_json
+)
+
 from parser import parse_file
+
 from extractor import (
     extract_entities,
     structure_entities
 )
+
 from entity_resolution import (
     resolve_person_entities
 )
@@ -20,6 +26,10 @@ from dynamic_relationship_extractor import (
 
 from relationship_postprocessor import (
     postprocess_relationships
+)
+
+from relationship_validator import (
+    validate_relationships
 )
 
 
@@ -42,23 +52,9 @@ st.caption(
 
 st.markdown("---")
 
-st.subheader(
-    "Investigation Data Input"
-)
-
-
-input_type = st.radio(
-    "Choose input method",
-    [
-        "Enter Text",
-        "Upload File"
-    ],
-    horizontal=True
-)
-
 
 # =========================================================
-# EMPTY STRUCTURE HELPER
+# HELPER
 # =========================================================
 
 def empty_structure():
@@ -79,6 +75,25 @@ def empty_structure():
 
 
 # =========================================================
+# INPUT METHOD
+# =========================================================
+
+st.subheader(
+    "Investigation Data Input"
+)
+
+
+input_type = st.radio(
+    "Choose input method",
+    [
+        "Enter Text",
+        "Upload File"
+    ],
+    horizontal=True
+)
+
+
+# =========================================================
 # MANUAL TEXT INPUT
 # =========================================================
 
@@ -90,10 +105,17 @@ if input_type == "Enter Text":
         placeholder="""
 Example:
 
-On 12 June 2026, Ravi Kumar contacted Arjun
-using mobile 9876543210 near Chennai.
+On 24 August 2026, Arjun rented a warehouse from Bala in Guindy, Chennai.
 
-Ravi Kumar used vehicle TN01AB1234.
+Bala delivered three sealed boxes to Arjun.
+
+Arjun shared an office with Kiran.
+
+Kiran introduced Bala to Naveen.
+
+Naveen used vehicle TN11CD7788.
+
+Rohit transferred Rs. 62,000 from account ACC310 to account ACC920.
 """
     )
 
@@ -129,18 +151,21 @@ Ravi Kumar used vehicle TN01AB1234.
                     "Entity extraction completed."
                 )
 
+
                 entity_data = []
+
 
                 for entity in entities:
 
                     entity_data.append({
+
                         "Entity":
                             entity["text"],
 
                         "Type":
                             entity["label"],
 
-                        "Confidence":
+                        "Entity Confidence":
                             round(
                                 entity["score"],
                                 2
@@ -156,6 +181,7 @@ Ravi Kumar used vehicle TN01AB1234.
                 st.subheader(
                     "Extracted Entities"
                 )
+
 
                 st.dataframe(
                     entity_df,
@@ -188,13 +214,14 @@ Ravi Kumar used vehicle TN01AB1234.
                 "Structured Investigation Data"
             )
 
+
             st.json(
                 structured_data
             )
 
 
             # =================================================
-            # DYNAMIC RELATIONSHIP EXTRACTION
+            # RELATIONSHIP EXTRACTION
             # =================================================
 
             st.subheader(
@@ -215,16 +242,36 @@ Ravi Kumar used vehicle TN01AB1234.
                 )
 
 
+                # =============================================
+                # POSTPROCESS
+                # =============================================
+
                 relationships = (
                     postprocess_relationships(
                         relationships,
                         text,
-                        structured_data[
-                            "persons"
-                        ]
+                        structured_data.get(
+                            "persons",
+                            []
+                        )
                     )
                 )
 
+
+                # =============================================
+                # VALIDATE
+                # =============================================
+
+                relationships = (
+                    validate_relationships(
+                        relationships
+                    )
+                )
+
+
+            # =================================================
+            # SHOW RELATIONSHIPS
+            # =================================================
 
             if relationships:
 
@@ -238,6 +285,58 @@ Ravi Kumar used vehicle TN01AB1234.
                 st.dataframe(
                     relationship_df,
                     width="stretch"
+                )
+
+
+                # =============================================
+                # VALIDATION SUMMARY
+                # =============================================
+
+                accepted = [
+                    r
+                    for r in relationships
+                    if r.get(
+                        "validation_decision"
+                    ) == "ACCEPT"
+                ]
+
+
+                review = [
+                    r
+                    for r in relationships
+                    if r.get(
+                        "validation_decision"
+                    ) == "REVIEW"
+                ]
+
+
+                rejected = [
+                    r
+                    for r in relationships
+                    if r.get(
+                        "validation_decision"
+                    ) == "REJECT"
+                ]
+
+
+                col1, col2, col3 = (
+                    st.columns(3)
+                )
+
+
+                col1.metric(
+                    "Accepted",
+                    len(accepted)
+                )
+
+                col2.metric(
+                    "Needs Review",
+                    len(review)
+                )
+
+                col3.metric(
+                    "Rejected",
+                    len(rejected)
                 )
 
             else:
@@ -258,23 +357,24 @@ Ravi Kumar used vehicle TN01AB1234.
 
             matches = (
                 resolve_person_entities(
-                    structured_data[
-                        "persons"
-                    ],
-                    structured_data[
-                        "aliases"
-                    ]
+                    structured_data.get(
+                        "persons",
+                        []
+                    ),
+                    structured_data.get(
+                        "aliases",
+                        []
+                    )
                 )
             )
 
 
             if matches:
 
-                match_df = (
-                    pd.DataFrame(
-                        matches
-                    )
+                match_df = pd.DataFrame(
+                    matches
                 )
+
 
                 st.dataframe(
                     match_df,
@@ -288,8 +388,32 @@ Ravi Kumar used vehicle TN01AB1234.
                 )
 
 
+            # =================================================
+            # GRAPH READY JSON
+            # =================================================
+
+            st.markdown("---")
+
+            st.subheader(
+                "Graph-Ready KRONOS JSON"
+            )
+
+
+            graph_ready_data = (
+                build_graph_ready_json(
+                    structured_data,
+                    relationships
+                )
+            )
+
+
+            st.json(
+                graph_ready_data
+            )
+
+
 # =========================================================
-# MULTI-FILE UPLOAD
+# MULTI FILE UPLOAD
 # =========================================================
 
 elif input_type == "Upload File":
@@ -297,6 +421,7 @@ elif input_type == "Upload File":
     uploaded_files = (
         st.file_uploader(
             "Upload Investigation Files",
+
             type=[
                 "pdf",
                 "csv",
@@ -304,6 +429,7 @@ elif input_type == "Upload File":
                 "txt",
                 "json"
             ],
+
             accept_multiple_files=True
         )
     )
@@ -341,12 +467,13 @@ elif input_type == "Upload File":
 
 
             # =================================================
-            # PROCESS EACH FILE
+            # PROCESS FILES
             # =================================================
 
             for uploaded_file in uploaded_files:
 
                 st.markdown("---")
+
 
                 st.subheader(
                     f"Processing: {uploaded_file.name}"
@@ -361,9 +488,23 @@ elif input_type == "Upload File":
                     f"Reading {uploaded_file.name}..."
                 ):
 
-                    parsed_file = parse_file(
-                        uploaded_file
-                    )
+                    try:
+
+                        parsed_file = (
+                            parse_file(
+                                uploaded_file
+                            )
+                        )
+
+                    except Exception as error:
+
+                        st.error(
+                            f"Error reading "
+                            f"{uploaded_file.name}: "
+                            f"{error}"
+                        )
+
+                        continue
 
 
                 extracted_text = (
@@ -377,12 +518,16 @@ elif input_type == "Upload File":
                 if not extracted_text.strip():
 
                     st.warning(
-                        f"Unable to extract readable content from "
-                        f"{uploaded_file.name}"
+                        f"Unable to extract readable content "
+                        f"from {uploaded_file.name}"
                     )
 
                     continue
 
+
+                # =============================================
+                # DISPLAY PARSED CONTENT
+                # =============================================
 
                 st.text_area(
                     f"Parsed Content - {uploaded_file.name}",
@@ -402,38 +547,20 @@ elif input_type == "Upload File":
 
                 # =================================================
                 # STRUCTURED FILE
-                # CSV / XLSX / JSON
                 # =================================================
 
                 if (
-                    parsed_file[
+                    parsed_file.get(
                         "file_type"
-                    ]
+                    )
                     == "structured"
                 ):
 
                     structured_data = (
-                        parsed_file[
-                            "structured"
-                        ]
-                    )
-
-
-                    all_structured_data.append({
-                        "file_name":
-                            uploaded_file.name,
-
-                        "data":
-                            structured_data
-                    })
-
-
-                    st.subheader(
-                        f"Structured Data - {uploaded_file.name}"
-                    )
-
-                    st.json(
-                        structured_data
+                        parsed_file.get(
+                            "structured",
+                            empty_structure()
+                        )
                     )
 
 
@@ -454,7 +581,8 @@ elif input_type == "Upload File":
 
 
                         st.subheader(
-                            f"Table Preview - {uploaded_file.name}"
+                            f"Table Preview - "
+                            f"{uploaded_file.name}"
                         )
 
 
@@ -463,6 +591,106 @@ elif input_type == "Upload File":
                             width="stretch"
                         )
 
+
+                        # -----------------------------------------
+                        # OPTIONAL ENTITY EXTRACTION FROM
+                        # SERIALIZED STRUCTURED TEXT
+                        # -----------------------------------------
+
+                        entities = (
+                            extract_entities(
+                                extracted_text
+                            )
+                        )
+
+
+                        if entities:
+
+                            extracted_structure = (
+                                structure_entities(
+                                    entities
+                                )
+                            )
+
+
+                            for key in structured_data:
+
+                                if (
+                                    key
+                                    in extracted_structure
+                                ):
+
+                                    existing = (
+                                        structured_data.get(
+                                            key,
+                                            []
+                                        )
+                                    )
+
+                                    new_values = (
+                                        extracted_structure.get(
+                                            key,
+                                            []
+                                        )
+                                    )
+
+                                    structured_data[
+                                        key
+                                    ] = list(
+                                        dict.fromkeys(
+                                            existing
+                                            + new_values
+                                        )
+                                    )
+
+
+                            entity_data = []
+
+                            for entity in entities:
+
+                                entity_data.append({
+
+                                    "File":
+                                        uploaded_file.name,
+
+                                    "Entity":
+                                        entity["text"],
+
+                                    "Type":
+                                        entity["label"],
+
+                                    "Entity Confidence":
+                                        round(
+                                            entity[
+                                                "score"
+                                            ],
+                                            2
+                                        )
+                                })
+
+
+                            all_entities.extend(
+                                entity_data
+                            )
+
+
+                            st.subheader(
+                                f"Extracted Entities - "
+                                f"{uploaded_file.name}"
+                            )
+
+
+                            st.dataframe(
+                                pd.DataFrame(
+                                    entity_data
+                                ),
+                                width="stretch"
+                            )
+
+
+                        # -----------------------------------------
+                        # STRUCTURED RELATIONSHIPS
+                        # -----------------------------------------
 
                         relationships = (
                             extract_relationships_from_dataframe(
@@ -477,9 +705,17 @@ elif input_type == "Upload File":
                             postprocess_relationships(
                                 relationships,
                                 extracted_text,
-                                structured_data[
-                                    "persons"
-                                ]
+                                structured_data.get(
+                                    "persons",
+                                    []
+                                )
+                            )
+                        )
+
+
+                        relationships = (
+                            validate_relationships(
+                                relationships
                             )
                         )
 
@@ -489,6 +725,66 @@ elif input_type == "Upload File":
                     # =============================================
 
                     else:
+
+                        entities = (
+                            extract_entities(
+                                extracted_text
+                            )
+                        )
+
+
+                        if entities:
+
+                            structured_data = (
+                                structure_entities(
+                                    entities
+                                )
+                            )
+
+
+                            entity_data = []
+
+                            for entity in entities:
+
+                                entity_data.append({
+
+                                    "File":
+                                        uploaded_file.name,
+
+                                    "Entity":
+                                        entity["text"],
+
+                                    "Type":
+                                        entity["label"],
+
+                                    "Entity Confidence":
+                                        round(
+                                            entity[
+                                                "score"
+                                            ],
+                                            2
+                                        )
+                                })
+
+
+                            all_entities.extend(
+                                entity_data
+                            )
+
+
+                            st.subheader(
+                                f"Extracted Entities - "
+                                f"{uploaded_file.name}"
+                            )
+
+
+                            st.dataframe(
+                                pd.DataFrame(
+                                    entity_data
+                                ),
+                                width="stretch"
+                            )
+
 
                         with st.spinner(
                             f"Extracting relationships from "
@@ -508,15 +804,22 @@ elif input_type == "Upload File":
                                 postprocess_relationships(
                                     relationships,
                                     extracted_text,
-                                    structured_data[
-                                        "persons"
-                                    ]
+                                    structured_data.get(
+                                        "persons",
+                                        []
+                                    )
+                                )
+                            )
+
+
+                            relationships = (
+                                validate_relationships(
+                                    relationships
                                 )
                             )
 
 
                 # =================================================
-                # UNSTRUCTURED FILE
                 # PDF / TXT
                 # =================================================
 
@@ -540,11 +843,20 @@ elif input_type == "Upload File":
 
                     if entities:
 
+                        structured_data = (
+                            structure_entities(
+                                entities
+                            )
+                        )
+
+
                         entity_data = []
+
 
                         for entity in entities:
 
                             entity_data.append({
+
                                 "File":
                                     uploaded_file.name,
 
@@ -554,7 +866,7 @@ elif input_type == "Upload File":
                                 "Type":
                                     entity["label"],
 
-                                "Confidence":
+                                "Entity Confidence":
                                     round(
                                         entity[
                                             "score"
@@ -569,13 +881,6 @@ elif input_type == "Upload File":
                         )
 
 
-                        entity_df = (
-                            pd.DataFrame(
-                                entity_data
-                            )
-                        )
-
-
                         st.subheader(
                             f"Extracted Entities - "
                             f"{uploaded_file.name}"
@@ -583,53 +888,27 @@ elif input_type == "Upload File":
 
 
                         st.dataframe(
-                            entity_df,
+                            pd.DataFrame(
+                                entity_data
+                            ),
                             width="stretch"
                         )
 
-
-                        structured_data = (
-                            structure_entities(
-                                entities
-                            )
-                        )
-
-
                     else:
-
-                        st.info(
-                            f"No entities detected in "
-                            f"{uploaded_file.name}"
-                        )
 
                         structured_data = (
                             empty_structure()
                         )
 
 
-                    all_structured_data.append({
-
-                        "file_name":
-                            uploaded_file.name,
-
-                        "data":
-                            structured_data
-                    })
-
-
-                    st.subheader(
-                        f"Structured Data - "
-                        f"{uploaded_file.name}"
-                    )
-
-
-                    st.json(
-                        structured_data
-                    )
+                        st.info(
+                            f"No entities detected in "
+                            f"{uploaded_file.name}"
+                        )
 
 
                     # =============================================
-                    # DYNAMIC RELATIONSHIP EXTRACTION
+                    # DYNAMIC RELATIONSHIPS
                     # =============================================
 
                     with st.spinner(
@@ -650,25 +929,55 @@ elif input_type == "Upload File":
                             postprocess_relationships(
                                 relationships,
                                 extracted_text,
-                                structured_data[
-                                    "persons"
-                                ]
+                                structured_data.get(
+                                    "persons",
+                                    []
+                                )
+                            )
+                        )
+
+
+                        relationships = (
+                            validate_relationships(
+                                relationships
                             )
                         )
 
 
                 # =================================================
-                # SHOW RELATIONSHIPS FOR EACH FILE
+                # STORE STRUCTURED DATA
+                # =================================================
+
+                all_structured_data.append({
+
+                    "file_name":
+                        uploaded_file.name,
+
+                    "data":
+                        structured_data
+                })
+
+
+                # =================================================
+                # DISPLAY STRUCTURED DATA
+                # =================================================
+
+                st.subheader(
+                    f"Structured Data - "
+                    f"{uploaded_file.name}"
+                )
+
+
+                st.json(
+                    structured_data
+                )
+
+
+                # =================================================
+                # DISPLAY RELATIONSHIPS
                 # =================================================
 
                 if relationships:
-
-                    relationship_df = (
-                        pd.DataFrame(
-                            relationships
-                        )
-                    )
-
 
                     st.subheader(
                         f"Relationships - "
@@ -677,7 +986,9 @@ elif input_type == "Upload File":
 
 
                     st.dataframe(
-                        relationship_df,
+                        pd.DataFrame(
+                            relationships
+                        ),
                         width="stretch"
                     )
 
@@ -706,19 +1017,6 @@ elif input_type == "Upload File":
 
 
             # =====================================================
-            # COMBINED STRUCTURED DATA
-            # =====================================================
-
-            st.subheader(
-                "Combined Structured Data"
-            )
-
-            st.json(
-                all_structured_data
-            )
-
-
-            # =====================================================
             # COMBINED ENTITIES
             # =====================================================
 
@@ -729,17 +1027,84 @@ elif input_type == "Upload File":
                 )
 
 
-                combined_entity_df = (
+                st.dataframe(
                     pd.DataFrame(
                         all_entities
+                    ),
+                    width="stretch"
+                )
+
+
+            # =====================================================
+            # COMBINED STRUCTURED DATA
+            # =====================================================
+
+            st.subheader(
+                "Combined Structured Data"
+            )
+
+
+            st.json(
+                all_structured_data
+            )
+
+
+            # =====================================================
+            # REMOVE DUPLICATE RELATIONSHIPS
+            # =====================================================
+
+            unique_relationships = []
+
+            seen_relationships = set()
+
+
+            for relationship in all_relationships:
+
+                key = (
+
+                    str(
+                        relationship.get(
+                            "source_entity",
+                            ""
+                        )
+                    ).lower(),
+
+                    relationship.get(
+                        "relationship",
+                        ""
+                    ),
+
+                    str(
+                        relationship.get(
+                            "target_entity",
+                            ""
+                        )
+                    ).lower(),
+
+                    relationship.get(
+                        "source_file",
+                        ""
                     )
                 )
 
 
-                st.dataframe(
-                    combined_entity_df,
-                    width="stretch"
+                if key in seen_relationships:
+                    continue
+
+
+                seen_relationships.add(
+                    key
                 )
+
+
+                unique_relationships.append(
+                    relationship
+                )
+
+
+            all_relationships = (
+                unique_relationships
+            )
 
 
             # =====================================================
@@ -753,84 +1118,75 @@ elif input_type == "Upload File":
 
             if all_relationships:
 
-                unique_relationships = []
-
-                seen_relationships = set()
-
-
-                for relationship in all_relationships:
-
-                    key = (
-                        str(
-                            relationship.get(
-                                "source_entity",
-                                ""
-                            )
-                        ).lower(),
-
-                        relationship.get(
-                            "relationship",
-                            ""
-                        ),
-
-                        str(
-                            relationship.get(
-                                "target_entity",
-                                ""
-                            )
-                        ).lower(),
-
-                        relationship.get(
-                            "source_file",
-                            ""
-                        )
-                    )
-
-
-                    if (
-                        key
-                        in seen_relationships
-                    ):
-
-                        continue
-
-
-                    seen_relationships.add(
-                        key
-                    )
-
-
-                    unique_relationships.append(
-                        relationship
-                    )
-
-
-                all_relationships = (
-                    unique_relationships
-                )
-
-
-                combined_relationship_df = (
+                st.dataframe(
                     pd.DataFrame(
                         all_relationships
-                    )
+                    ),
+                    width="stretch"
                 )
 
 
-                st.dataframe(
-                    combined_relationship_df,
-                    width="stretch"
+                # =============================================
+                # VALIDATION SUMMARY
+                # =============================================
+
+                accepted = [
+                    r
+                    for r in all_relationships
+                    if r.get(
+                        "validation_decision"
+                    ) == "ACCEPT"
+                ]
+
+
+                review = [
+                    r
+                    for r in all_relationships
+                    if r.get(
+                        "validation_decision"
+                    ) == "REVIEW"
+                ]
+
+
+                rejected = [
+                    r
+                    for r in all_relationships
+                    if r.get(
+                        "validation_decision"
+                    ) == "REJECT"
+                ]
+
+
+                col1, col2, col3 = (
+                    st.columns(3)
+                )
+
+
+                col1.metric(
+                    "Accepted Relationships",
+                    len(accepted)
+                )
+
+                col2.metric(
+                    "Needs Review",
+                    len(review)
+                )
+
+                col3.metric(
+                    "Rejected Relationships",
+                    len(rejected)
                 )
 
             else:
 
                 st.info(
-                    "No relationships detected across uploaded files."
+                    "No relationships detected "
+                    "across uploaded files."
                 )
 
 
             # =====================================================
-            # CROSS-FILE ENTITY RESOLUTION
+            # CROSS FILE ENTITY RESOLUTION
             # =====================================================
 
             st.subheader(
@@ -891,21 +1247,40 @@ elif input_type == "Upload File":
 
             if matches:
 
-                match_df = (
+                st.dataframe(
                     pd.DataFrame(
                         matches
-                    )
-                )
-
-
-                st.dataframe(
-                    match_df,
+                    ),
                     width="stretch"
                 )
 
             else:
 
                 st.info(
-                    "No possible duplicate identities detected "
-                    "across uploaded files."
+                    "No possible duplicate identities "
+                    "detected across uploaded files."
                 )
+
+
+            # =====================================================
+            # GRAPH READY KRONOS JSON
+            # =====================================================
+
+            st.markdown("---")
+
+            st.header(
+                "Graph-Ready KRONOS JSON"
+            )
+
+
+            graph_ready_data = (
+                build_graph_ready_json(
+                    all_structured_data,
+                    all_relationships
+                )
+            )
+
+
+            st.json(
+                graph_ready_data
+            )
