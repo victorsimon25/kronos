@@ -1,0 +1,12 @@
+{
+  "met": "MET",
+  "called": "CALLED",
+  "contacted": "CONTACTED",
+  "used phone": "USES_PHONE",
+  "used vehicle": "USED_VEHICLE",
+  "uses account": "USES_ACCOUNT",
+  "transferred to": "TRANSFERRED_TO",
+  "associated with": "ASSOCIATED_WITH",
+  "located at": "LOCATED_AT",
+  "works for": "WORKS_FOR"
+}
