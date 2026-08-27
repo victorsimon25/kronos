@@ -1,6 +1,7 @@
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, UploadFile, HTTPException
 
 from services.ingestion import parse_file
+from services.graph import Neo4jService
 
 
 router = APIRouter(prefix="/ingest", tags=["Ingestion"])
@@ -8,34 +9,45 @@ router = APIRouter(prefix="/ingest", tags=["Ingestion"])
 
 @router.post("/file")
 async def ingest_file(file: UploadFile = File(...)):
-    if not file.filename:
-        raise HTTPException(
-            status_code=400,
-            detail="Filename is required"
-        )
-
     try:
         file_bytes = await file.read()
 
-        result = parse_file(
+        data = parse_file(
             file.filename,
             file_bytes
         )
 
+        # CSV records can be inserted directly into Neo4j.
+        if data["type"] == "csv":
+            graph = Neo4jService()
+
+            try:
+                graph.verify_connection()
+
+                inserted = graph.create_records(
+                    data["rows"]
+                )
+            finally:
+                graph.close()
+
+            return {
+                "status": "success",
+                "filename": file.filename,
+                "type": "csv",
+                "row_count": data["row_count"],
+                "inserted_into_neo4j": inserted
+            }
+
+        # PDF/TXT are parsed for now.
+        # Their text will go through NLP/LLM extraction next.
         return {
             "status": "success",
             "filename": file.filename,
-            "data": result
+            "data": data
         }
-
-    except ValueError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=str(e)
-        )
 
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to process file: {str(e)}"
+            detail=str(e)
         )
